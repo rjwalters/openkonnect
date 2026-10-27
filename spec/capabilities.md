@@ -438,6 +438,12 @@ control, and grouping edits into transactions. Every entry here is live-editor.
   - An implementation may offer zoom through the docs' unstable action
     request, but only behind an explicit opt-in. The result then marks it
     best-effort.
+  - **As shipped (#5):** checked against kicad-python 0.8.0, which has no
+    zoom, view or net-highlight request; the unstable action request is not
+    used and there is no opt-in. `mode` `highlight` or `both` and
+    `zoom: true` each return `unsupported_on_this_kicad` for that part, while
+    the items are still selected (the editor draws the selection
+    highlighted). The view is not moved.
 - **Failure modes:**
   - an unrecognised finding gives `invalid_argument`, naming its index;
   - findings that carry an input hash which no longer matches the board are

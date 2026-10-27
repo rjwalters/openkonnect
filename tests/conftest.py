@@ -172,3 +172,156 @@ def live_session() -> Session:
         reason = status.get("reason") or status.get("error") or {}
         pytest.skip(f"live_kicad: KiCad not reachable ({reason.get('code', 'unknown')})")
     return session
+
+
+# -- a fake PCB editor with a selection (#5) --------------------------------------
+
+SELECTION_BOARD = os.path.join(os.path.dirname(__file__), "fixtures", "selection.kicad_pcb")
+MM = 1_000_000
+
+
+def _box(x0: float, y0: float, x1: float, y1: float) -> dict[str, int]:
+    return {
+        "x0_nm": round(x0 * MM),
+        "y0_nm": round(y0 * MM),
+        "x1_nm": round(x1 * MM),
+        "y1_nm": round(y1 * MM),
+    }
+
+
+def _pt(x: float, y: float) -> dict[str, int]:
+    return {"x": round(x * MM), "y": round(y * MM)}
+
+
+def selection_board_index() -> dict[str, Any]:
+    """What KiCad reports for ``tests/fixtures/selection.kicad_pcb``, in board_index form.
+
+    Written by hand from the fixture file: three footprints of two 1 x 1.2 mm pads,
+    nets VIN (R1.1, R2.1, routed by three F.Cu segments), GND (R1.2, R3.2) and SIG
+    (R2.2, R3.1, unrouted); Edge.Cuts 100,50 to 140,75 (mm, file frame).
+    """
+    fps = []
+    for n, (ref, x, y, nets) in enumerate(
+        [
+            ("R1", 110, 60, ("VIN", "GND")),
+            ("R2", 120, 60, ("VIN", "SIG")),
+            ("R3", 130, 65, ("SIG", "GND")),
+        ],
+        start=1,
+    ):
+        pads = []
+        for k, (num, dx) in enumerate((("1", -1), ("2", 1))):
+            px = x + dx
+            pads.append(
+                {
+                    "id": f"pad-{ref}-{num}",
+                    "kind": "pad",
+                    "ref": ref,
+                    "pad": num,
+                    "net": nets[k],
+                    "layer": None,
+                    "position_nm": _pt(px, y),
+                    "bbox_nm": _box(px - 0.5, y - 0.6, px + 0.5, y + 0.6),
+                }
+            )
+        fps.append(
+            {
+                "id": f"fp-{n}",
+                "kind": "footprint",
+                "ref": ref,
+                "net": None,
+                "layer": "F.Cu",
+                "position_nm": _pt(x, y),
+                "bbox_nm": _box(x - 1.5, y - 0.6, x + 1.5, y + 0.6),
+                "pads": pads,
+            }
+        )
+    w = 0.125
+    copper = [
+        {
+            "id": f"trk-{i}",
+            "kind": "track",
+            "net": "VIN",
+            "layer": "F.Cu",
+            "bbox_nm": _box(min(a, c) - w, min(b, d) - w, max(a, c) + w, max(b, d) + w),
+        }
+        for i, (a, b, c, d) in enumerate(
+            [(109, 60, 109, 57), (109, 57, 119, 57), (119, 57, 119, 60)], start=1
+        )
+    ]
+    return {
+        "footprints": fps,
+        "copper": copper,
+        "nets": ["VIN", "GND", "SIG"],
+        "outline_nm": _box(100, 50, 140, 75),
+    }
+
+
+class EditorFake(FakeBackend):
+    """A fake PCB editor holding ``index`` (board_index form) and a selection of IDs."""
+
+    def __init__(
+        self,
+        index: dict[str, Any] | None = None,
+        *,
+        selected: list[str] | None = None,
+        undescribed: dict[str, int] | None = None,
+        text: str | None = None,
+        **script: Any,
+    ) -> None:
+        script.setdefault(
+            "open_boards", [[board_ref(os.path.dirname(SELECTION_BOARD), "selection")]]
+        )
+        super().__init__(**script)
+        self.index = index if index is not None else selection_board_index()
+        self.selected: list[str] = list(selected or [])
+        self.undescribed = dict(undescribed or {})
+        self.text = text
+        self.set_calls: list[list[str]] = []
+
+    def items_by_id(self) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for fp in self.index["footprints"]:
+            out[fp["id"]] = fp
+            for p in fp["pads"]:
+                out[p["id"]] = p
+        for c in self.index["copper"]:
+            out[c["id"]] = c
+        return out
+
+    def id_of(self, name: str) -> str:
+        """Session ID of a footprint ref or ``REF.PAD`` (test helper)."""
+        for item in self.items_by_id().values():
+            if item["kind"] == "footprint" and item["ref"] == name:
+                return item["id"]
+            if item["kind"] == "pad" and f"{item['ref']}.{item['pad']}" == name:
+                return item["id"]
+        raise KeyError(name)
+
+    def selection(self, ref: BoardRef, kinds: list[str] | None = None) -> dict[str, Any]:
+        self.calls.append("selection")
+        by_id = self.items_by_id()
+        items = [by_id[i] for i in self.selected if i in by_id]
+        if kinds:
+            items = [i for i in items if i["kind"] in kinds]
+        return {
+            "items": items,
+            "undescribed": {} if kinds else dict(self.undescribed),
+            "outline_nm": self.index["outline_nm"],
+        }
+
+    def board_index(self, ref: BoardRef) -> dict[str, Any]:
+        self.calls.append("board_index")
+        return self.index
+
+    def set_selection(self, ref: BoardRef, ids: list[str]) -> None:
+        self.calls.append("set_selection")
+        self.set_calls.append(list(ids))
+        known = self.items_by_id()
+        self.selected = [i for i in ids if i in known]
+
+    def board_text(self, ref: BoardRef) -> str:
+        self.calls.append("board_text")
+        if self.text is None:
+            raise ApiError("not implemented", code=ApiStatusCode.AS_UNIMPLEMENTED)
+        return self.text

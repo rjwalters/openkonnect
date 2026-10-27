@@ -3,6 +3,8 @@
 Read-only: ``session_status`` (SES-01) and ``board_summary`` (LAY-01).
 File sync (#4): ``save_before_external_write`` (SES-04), ``sync_from_disk``
 (SES-05) and ``run_kct_handoff`` (SES-06).
+Selection and findings (#5): ``get_selection`` (SES-08, read-only) and
+``show_findings`` (SES-09, changes only the editor selection).
 """
 
 from __future__ import annotations
@@ -18,9 +20,11 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from . import __version__
 from .session import Session
 from .tools import board_summary as board_summary_mod
+from .tools import get_selection as get_selection_mod
 from .tools import run_kct_handoff as handoff_mod
 from .tools import save_before_external_write as save_mod
 from .tools import session_status as session_status_mod
+from .tools import show_findings as show_findings_mod
 from .tools import sync_from_disk as sync_mod
 
 INSTRUCTIONS = (
@@ -33,6 +37,8 @@ INSTRUCTIONS = (
 _READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
 #: Saving writes the board file but never loses editor state.
 _SAVES = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+#: Changes only the editor selection: no document change, nothing lost.
+_SELECTS = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
 #: Reloading can discard unsaved editor state (only with discard_unsaved).
 _RELOADS = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False)
 
@@ -73,6 +79,32 @@ def build_server(session: Session | None = None) -> FastMCP:
     )
     async def board_summary() -> CallToolResult:
         return await run(board_summary_mod.board_summary)
+
+    @mcp.tool(
+        name="get_selection",
+        description=get_selection_mod.DESCRIPTION,
+        annotations=_READ_ONLY,
+        structured_output=False,
+    )
+    async def get_selection(
+        kinds: list[str] | None = None,
+        include_geometry: bool = False,
+    ) -> CallToolResult:
+        return await run(lambda s: get_selection_mod.get_selection(s, kinds, include_geometry))
+
+    @mcp.tool(
+        name="show_findings",
+        description=show_findings_mod.DESCRIPTION,
+        annotations=_SELECTS,
+        structured_output=False,
+    )
+    async def show_findings(
+        findings: list[Any] | dict[str, Any] | str,
+        mode: str = "select",
+        focus: int | str = "all",
+        zoom: bool = False,
+    ) -> CallToolResult:
+        return await run(lambda s: show_findings_mod.show_findings(s, findings, mode, focus, zoom))
 
     @mcp.tool(
         name="save_before_external_write",
