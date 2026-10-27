@@ -14,9 +14,10 @@ classifiers = [
 dependencies = [
     # KiCad's official IPC API bindings (MIT). See docs/ipc-client.md.
     "kicad-python>=0.8,<0.9",
-    # File-level layer. Loose range only; the pin and the kicad-tools-main CI
-    # job belong to #6.
-    "kicad-tools>=0.24",
+    # File-level layer (docs/architecture.md). Bounded to the minor series
+    # verified in uv.lock; the kicad-tools-main CI job catches API breaks
+    # before a bump.
+    "kicad-tools>=0.24,<0.25",
     "mcp>=1.2,<2",
 ]
 
