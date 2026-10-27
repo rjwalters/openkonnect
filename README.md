@@ -31,4 +31,5 @@ Konnect-EDA or Orchis.ai LLC.** It contains none of their code. See
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Third-party code reused with attribution is
+listed in [NOTICE](NOTICE).

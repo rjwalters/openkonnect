@@ -1,0 +1,20 @@
+openkonnect
+Copyright (c) 2026 RJ Walters. Licensed under the MIT License
+(see LICENSE).
+
+This file lists third-party code reused in openkonnect, as required by
+CLEANROOM.md ("Permitted third-party code"). Each entry names the project,
+its license and copyright line, its URL, and every file or portion taken,
+with the upstream commit it was taken from. Files taken from a project also
+keep that project's copyright notice in their header.
+
+--------------------------------------------------------------------------
+
+KiCAD-MCP-Server
+  URL:       https://github.com/mixelpixx/KiCAD-MCP-Server
+  License:   MIT
+  Copyright: Copyright (c) 2024 mixelpixx
+
+  Files taken: none yet. No code from this project has been reused so far.
+  Add one line per reuse, in this form:
+    <openkonnect path>  <-  <upstream path> @ <upstream commit>
