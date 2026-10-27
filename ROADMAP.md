@@ -14,8 +14,11 @@ document with undo.
 
 1. **Clean room first.** Every capability goes through
    [CLEANROOM.md](CLEANROOM.md): a spec written in our own words, then an
-   implementation by someone who has not seen the original source. A feature
-   without a spec does not get built.
+   implementation by someone who has not seen the original source. That
+   applies to Konnect and to GPL code, including KiCad's. Permissively
+   licensed code (MIT, BSD, ISC, Apache-2.0) may be reused under
+   CLEANROOM.md's attribution rules. A feature without a spec does not get
+   built.
 2. **Thin over kicad-tools.** Compute (parsing, checks, placement, routing,
    exports) lives in kicad-tools. openkonnect moves results into and out of
    the editor. When a feature here needs file-level logic, that logic goes
@@ -52,23 +55,27 @@ document with undo.
 
 - [x] Project charter, clean-room rules, MIT license
 - [x] Agent tooling (Loom, Repo Skills, Squad)
-- [ ] **Capability spec v0** (#1): `spec/capabilities.md`, grouped by area. Each
+- [x] **Capability spec v0** (#1): `spec/capabilities.md`, grouped by area. Each
       capability is marked file-level or live-editor, and as already in
       kicad-tools where it is. Includes a provenance section.
-- [ ] **Bootstrap** (#2): `pyproject.toml` (uv, Python >= 3.10), the
+- [x] **Bootstrap** (#2): `pyproject.toml` (uv, Python >= 3.10), the
       `openkonnect serve` MCP entry point, `session_status` and `board_summary`,
       clean errors when KiCad isn't running, CI on mocked IPC.
-- [ ] **Live-editor file sync** (#4): dirty state per open document in
+- [x] **Live-editor file sync** (#4): dirty state per open document in
       `session_status`, `save_before_external_write`, `sync_from_disk`, and the
       documented handoff protocol (save, `kct` writes, reload), with an
       end-to-end test that wraps one `kct` command such as `kct route`.
-- [ ] **IPC client decision** (#2): build on kicad-tools' `kicad_tools.ipc`,
-      KiCad's official Python IPC bindings, or KiCAD-MCP-Server's MIT IPC
-      backend (IPC parts only: no `pcbnew` SWIG, no AT-SPI). Record the
-      license and the reason in the repo.
-- [ ] **CLEANROOM.md amendment** (#7): MIT KiCAD-MCP-Server code may be reused
-      with attribution, kept separate from anything recalled from Konnect,
-      plus a `NOTICE` file listing it.
+- [x] **IPC client decision** (#2): build on kicad-tools' `kicad_tools.ipc`,
+      KiCad's official Python IPC bindings, or permissively licensed IPC code
+      reusable under [CLEANROOM.md](CLEANROOM.md), such as KiCAD-MCP-Server's
+      MIT IPC backend (IPC parts only: no `pcbnew` SWIG, no AT-SPI). Record
+      the license and the reason in the repo. Decided: `kipy` (kicad-python,
+      MIT), recorded in [docs/ipc-client.md](docs/ipc-client.md).
+- [x] **CLEANROOM.md amendment** (#7): code under MIT, BSD, ISC or
+      Apache-2.0 may be reused with attribution; GPL code, including KiCad's
+      source, stays black-box only. No file mixes reused code with anything
+      recalled from Konnect, and a `NOTICE` file lists what was taken. The
+      rules are in [CLEANROOM.md](CLEANROOM.md).
 - [x] **kicad-tools boundary** (#6): `docs/architecture.md` with the
       file-level vs live-editor rule and the list of gaps filed upstream, a
       pinned kicad-tools version range in `pyproject.toml`, and a CI job that
@@ -193,7 +200,7 @@ Mostly delegation. Exports already exist in kicad-tools and `kicad-cli`.
 
 | Question | Why it matters | Resolve by |
 |----------|----------------|------------|
-| Which IPC client library? | License and maintenance. Candidates: `kicad_tools.ipc`, KiCad's official bindings, KiCAD-MCP-Server's MIT IPC backend (#7) | Phase 0 (#2) |
+| Which IPC client library? | License and maintenance. Candidates: `kicad_tools.ipc`, KiCad's official bindings, permissively licensed IPC code reusable under `CLEANROOM.md` such as KiCAD-MCP-Server's MIT IPC backend (#7) | Decided (#2): `kipy` (kicad-python, MIT), recorded in `docs/ipc-client.md` |
 | What does KiCad 10's IPC API cover for the schematic editor? | Decides the scope of Phase 5 | Phase 0 spec |
 | How do we keep IPC edits from colliding with the user editing at the same time? | Data loss and surprising undo history. External file writes are covered by the #4 handoff protocol | Phase 2 |
 | How should live tests run in CI? | KiCad needs a display; headless support varies by platform | Phase 0 harness |
