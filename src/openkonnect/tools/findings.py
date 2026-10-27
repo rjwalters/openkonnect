@@ -7,8 +7,10 @@ shapes. For every supported model it imports the class from the installed
 kicad-tools and:
 
 * recognises a JSON finding as that model when the dict carries every key the
-  model's own ``to_dict()`` always emits (computed at run time from a probe
-  instance, so the key set follows the installed version);
+  model's own ``to_dict()`` always emits with a value (computed at run time
+  from a probe instance, so the key set follows the installed version). A key
+  the probe emits as ``None`` (an optional field such as ``location``) may be
+  absent; when several models match, the one sharing most keys wins;
 * reads only the model's locator fields (names checked against the model's
   dataclass fields at run time) to get references, ``REF.PAD`` names, net
   names, points and a layer.
@@ -23,7 +25,10 @@ Frames (spec C-1). A model's point is used only when its frame is known:
 * ``kct check`` (``validate.violations.DRCViolation.location``): ``file``.
   The model does not state a frame; kct 0.24 was observed (black-box, on
   ``tests/fixtures/selection.kicad_pcb``) to report footprint positions
-  exactly as stored in the file, and the round-trip test pins that.
+  exactly as stored in the file, and the round-trip test pins that when a
+  location is given. The field is optional (``Location | None``); kicad-tools
+  ``main`` emits ``null`` there, and such a finding simply yields no point
+  locator (``_xy`` accepts only an ``(x, y)`` pair).
 * ``kct net-status`` (``PadInfo.position``): ``board``, as the model's own
   field comment says ("Board coordinates"), also observed on the fixture.
 * ``kct detect-mistakes`` (``Mistake.location``) and ``kct drc``
@@ -84,6 +89,8 @@ class Adapter:
     extract: Callable[[Getter, Any], list[Locator]]
     model: type | None = None
     signature: frozenset[str] = frozenset()
+    #: ``signature`` minus the keys the probe emits as ``None`` (optional fields).
+    required: frozenset[str] = frozenset()
     disabled: str | None = None
     module_obj: Any = field(default=None, repr=False)
 
@@ -100,7 +107,9 @@ class Adapter:
             if missing:
                 raise LookupError(f"fields no longer on the model: {missing}")
             sample = self.probe(model, mod)
-            self.signature = frozenset(sample.to_dict().keys())
+            emitted = sample.to_dict()
+            self.signature = frozenset(emitted)
+            self.required = frozenset(k for k, v in emitted.items() if v is not None)
             self.model = model
             self.module_obj = mod
         except Exception as e:  # any upstream change disables just this model
@@ -296,11 +305,11 @@ def match(finding: Any) -> Adapter:
                 return a
         raise Unrecognised(f"not a JSON object or a known kicad-tools model ({type(finding)})")
     keys = set(finding)
-    hits = [a for a in live if a.signature <= keys]
+    hits = [a for a in live if a.required <= keys]
     if not hits:
         raise Unrecognised("its keys match no kicad-tools finding model")
-    best = max(len(a.signature) for a in hits)
-    top = [a for a in hits if len(a.signature) == best]
+    best = max(len(a.signature & keys) for a in hits)
+    top = [a for a in hits if len(a.signature & keys) == best]
     if len(top) > 1:
         raise Unrecognised(
             "it matches more than one kicad-tools model equally", [a.qualname for a in top]

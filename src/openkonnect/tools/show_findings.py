@@ -26,6 +26,14 @@ How locators become items:
 * a point is used only when the finding resolved no name: it selects the
   smallest item whose bounding box contains it (on the finding's layer, when
   given). Otherwise it is checked against the resolved items.
+
+A point is optional. kicad-tools' models declare ``location`` as optional
+(``Location | None``), and ``kct check`` on kicad-tools ``main`` emits
+``"location": null`` for findings that 0.24 located. A finding whose point is
+null, missing or not an ``(x, y)`` pair is resolved from its references,
+pads and nets alone; its result has ``has_point: false`` and a
+``point_note`` saying so, and no coordinate is invented. A finding with no
+point *and* no name is ``invalid_argument``, naming its index.
 """
 
 from __future__ import annotations
@@ -53,7 +61,9 @@ DESCRIPTION = (
     "unsupported_on_this_kicad while the selection still happens. Per finding the result "
     "lists the resolved items, the locators that did not resolve with a reason, and the "
     "action taken, plus totals. Findings whose pcb_sha256 no longer matches the board are "
-    "still resolved and flagged possibly_stale."
+    "still resolved and flagged possibly_stale. A finding's location is optional: one "
+    "with a null or missing location is resolved from its names and reported with "
+    "has_point false."
 )
 
 MODES = ("select", "highlight", "both")
@@ -138,7 +148,8 @@ def extract_all(items: list[Any]) -> list[tuple[F.Adapter, list[F.Locator]]]:
         if not locs:
             raise E.invalid_argument(
                 f"Finding {i} ({adapter.source}) carries no recognisable locator: no "
-                "reference, pad, net or point.",
+                "reference, pad or net, and its point (location) is null, missing or "
+                "not an (x, y) pair.",
                 index=i,
                 model=adapter.qualname,
             )
@@ -262,6 +273,12 @@ def _point_nm(loc: F.Locator, index: BoardIndex) -> tuple[int, int] | None | str
         )
     return "frame_not_stated"
 
+
+NO_POINT_NOTE = (
+    "The finding carries no point: its location is null or missing (optional in "
+    "kicad-tools' models). It was resolved from its references, pads and nets only, "
+    "and no location was checked."
+)
 
 _POINT_MESSAGES = {
     "frame_not_stated": "The kicad-tools model does not say which frame this point is in "
@@ -522,6 +539,7 @@ def show_findings(
         in_focus = i in focused
         if in_focus:
             ids.extend(x for x in r["ids"] if x not in ids)
+        has_point = bool(r["points"])
         per.append(
             {
                 "index": i,
@@ -532,6 +550,8 @@ def show_findings(
                 "net_basis": r["net_basis"],
                 "unresolved": r["unresolved"],
                 "points": r["points"],
+                "has_point": has_point,
+                **({} if has_point else {"point_note": NO_POINT_NOTE}),
                 "possibly_stale": stale["possibly_stale"],
                 "_ids": r["ids"],
                 "_focus": in_focus,

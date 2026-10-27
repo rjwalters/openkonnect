@@ -431,6 +431,11 @@ control, and grouping edits into transactions. Every entry here is live-editor.
   - the action taken.
 
   Plus totals.
+- **Optional location (#5):** a finding's point is optional in kicad-tools'
+  models, and `kct check` on kicad-tools `main` emits `location: null`. Such
+  a finding is resolved from its refs, pads and nets alone and reported with
+  `has_point: false` and a `point_note`; no point is invented. A finding with
+  neither a point nor a name is `invalid_argument`.
 - **KiCad 10 notes:**
   - Selecting items is documented.
   - Zooming to items and highlighting a net are not documented. Those parts
@@ -464,7 +469,8 @@ control, and grouping edits into transactions. Every entry here is live-editor.
   3. Feed its findings to [SES-09](#ses-09-show_findings).
   4. The selection that results contains the same refdes, `REF.PAD` and net
      set as the original selection.
-  5. Locations agree within 1 µm in the file frame.
+  5. Locations agree within 1 µm in the file frame, for the findings that
+     carry one.
 - **Failure modes:** a mismatch is a test failure, reported with the
   difference between the two sets.
 - **Test requirement:** a live-KiCad test using a fixture written for this

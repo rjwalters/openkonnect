@@ -135,6 +135,46 @@ def test_mistake_location_has_no_stated_frame_and_is_not_used():
     assert p["used_for"] == "none" and p["reason"] == "frame_not_stated"
 
 
+@pytest.mark.parametrize("how", ["object", "json_null", "json_missing"])
+def test_finding_without_location_resolves_by_name_and_says_so(how):
+    obj = DRCViolation(
+        rule_id="courtyard_missing",
+        severity="warning",
+        message="R2 has no courtyard",
+        layer="F.Cu",
+        items=("R2",),
+        nets=("VIN",),
+    )
+    assert obj.location is None
+    finding: object = obj
+    if how != "object":
+        finding = obj.to_dict()
+        assert finding.get("location") is None
+        if how == "json_missing":
+            finding.pop("location", None)
+    fake = EditorFake()
+    r = show(fake, [finding, courtyard("R1", 110, 60)])
+    assert r["ok"] is True, r
+    f, located = r["findings"]
+    assert f["source"] == "kct check"
+    assert f["status"] == "resolved"
+    assert f["resolved"]["footprints"] == ["R2"]
+    assert f["resolved"]["nets"] == ["VIN"]
+    assert f["points"] == [] and f["has_point"] is False
+    assert "null or missing" in f["point_note"]
+    assert f["unresolved"] == []
+    assert located["has_point"] is True and "point_note" not in located
+    assert "R2" in selected(fake)["footprints"]
+
+
+def test_finding_with_null_location_and_no_name_is_invalid_argument():
+    bare = DRCViolation(rule_id="x", severity="error", message="", location=None).to_dict()
+    r = show(EditorFake(), [courtyard("R1", 110, 60), bare])
+    assert r["error"]["code"] == "invalid_argument"
+    assert r["error"]["details"]["index"] == 1
+    assert "null, missing" in r["error"]["message"]
+
+
 def test_unrecognised_finding_is_invalid_argument_naming_its_index():
     fake = EditorFake()
     r = show(fake, [courtyard("R1", 110, 60).to_dict(), {"severity": "error", "where": "here"}])
@@ -352,10 +392,18 @@ def test_round_trip_footprints_through_kct_check():
     assert r["staleness"]["possibly_stale"] is False
     _assert_round_trip(_refs(sel), _refs(selected(fake)))
 
-    # Locations agree within 1 um in the file frame.
+    # Locations agree within 1 um in the file frame, where kct gives one. The
+    # field is optional upstream (kct 0.24 fills it here; kicad-tools main
+    # emits null), so a null location is checked as "reported, not invented".
     geo = make_session(fake).run_tool(lambda s: get_selection(s, include_geometry=True))
-    for v in report["violations"]:
+    for v, f in zip(report["violations"], r["findings"], strict=True):
         [ref] = v["items"]
+        assert f["resolved"]["footprints"] == [ref]
+        if v.get("location") is None:
+            assert f["has_point"] is False and f["points"] == []
+            assert "point_note" in f
+            continue
+        assert f["has_point"] is True
         pos = geo["geometry"][ref]["position_mm"]
         assert abs(pos["x_mm"] - v["location"][0]) <= 1e-3
         assert abs(pos["y_mm"] - v["location"][1]) <= 1e-3
