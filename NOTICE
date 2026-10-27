@@ -5,16 +5,31 @@ Copyright (c) 2026 RJ Walters. Licensed under the MIT License
 This file lists third-party code reused in openkonnect, as required by
 CLEANROOM.md ("Permitted third-party code"): code licensed under MIT, BSD,
 ISC or Apache-2.0. Files taken from a project also keep that project's
-copyright notice in their header. For Apache-2.0 sources, the upstream
-NOTICE file's attribution notices, if any, are reproduced in the entry.
+copyright notice in their header.
+
+The full license text of each source, verbatim and including its
+copyright line, lives in LICENSES/<source-id>.txt, where <source-id> is
+the lowercase owner-repo slug of the upstream repository (for example
+LICENSES/mixelpixx-kicad-mcp-server.txt). That file is added in the same
+PR that first reuses code from the source, and stays while any of its code
+remains; the LICENSES/ directory is created by the first such PR. Each
+entry below names its license file on the "License text:" line.
+
+For Apache-2.0 sources, the upstream NOTICE file's attribution notices are
+reproduced verbatim in the entry's "Upstream NOTICE:" block (write "none"
+when upstream ships no NOTICE file), and each changed file carries a
+"Modified by openkonnect" comment in its header.
 
 No third-party code has been reused so far. Add one entry per source
 project, in this form:
 
   <Project name>
-    URL:       <upstream repository URL>
-    License:   <MIT | BSD-2-Clause | BSD-3-Clause | ISC | Apache-2.0>
-    Copyright: <upstream copyright line(s)>
+    URL:          <upstream repository URL>
+    License:      <MIT | BSD-2-Clause | BSD-3-Clause | ISC | Apache-2.0>
+    License text: LICENSES/<source-id>.txt
+    Copyright:    <upstream copyright line(s)>
+    Upstream NOTICE: (Apache-2.0 sources only)
+      <upstream NOTICE attribution notices, verbatim, or: none>
     Files taken:
       <openkonnect path>  <-  <upstream path> @ <upstream commit>
 
@@ -24,6 +39,8 @@ Prospective sources (no code taken yet; complete the entry on first
 reuse):
 
   KiCAD-MCP-Server
-    URL:       https://github.com/mixelpixx/KiCAD-MCP-Server
-    License:   MIT
-    Copyright: Copyright (c) 2024 mixelpixx
+    URL:          https://github.com/mixelpixx/KiCAD-MCP-Server
+    License:      MIT
+    License text: LICENSES/mixelpixx-kicad-mcp-server.txt
+                  (to be added by the first PR that reuses its code)
+    Copyright:    Copyright (c) 2024 mixelpixx

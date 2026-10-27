@@ -44,9 +44,26 @@ KiCad's source, stays black-box only. Reuse is allowed provided:
   upstream project keeps that file's copyright notice, and the source is
   listed in [NOTICE](NOTICE) with its license, the files taken and the
   upstream commit.
-- **Apache-2.0 extras.** For Apache-2.0 code, also carry the upstream `NOTICE`
-  file's attribution notices, if it has one, into ours, and mark each file you
-  change with a prominent notice that you changed it (Apache-2.0 section 4).
+- **License text travels with the code.** The full license text of each
+  reused source, verbatim and including its copyright line, is committed as
+  `LICENSES/<source-id>.txt`, where `<source-id>` is the lowercase
+  `owner-repo` slug of the upstream repository (for example
+  `LICENSES/mixelpixx-kicad-mcp-server.txt`). It is added in the same PR
+  that first reuses code from that source, and is not removed while any of
+  that source's code remains in the repository. The `LICENSES/` directory is
+  created by the first such PR.
+- **NOTICE names the license file.** The [NOTICE](NOTICE) entry for a source
+  names its `LICENSES/<source-id>.txt` file on a `License text:` line.
+- **Apache-2.0 extras.** For Apache-2.0 code, also:
+  - keep the Apache-2.0 license text in `LICENSES/<source-id>.txt`, as above;
+  - reproduce the attribution notices of the upstream `NOTICE` file verbatim
+    in our [NOTICE](NOTICE) entry, in its `Upstream NOTICE:` block, when
+    upstream has a `NOTICE` file (write `none` there when it does not);
+  - retain all copyright, patent, trademark and attribution notices in the
+    files taken;
+  - mark each changed file with a prominent notice that it was changed
+    (Apache-2.0 section 4), by adding a short "Modified by openkonnect"
+    comment in that file's header.
 - **No mixing with Konnect.** No file may combine permissively licensed reused
   code with anything recalled from Konnect. A contributor who was exposed to
   Konnect source for a capability must not touch reused code for that same
