@@ -5,7 +5,8 @@ schematic, layout, placement, routing, design review and manufacturing tools,
 through KiCad's IPC API.
 
 > **Status: not yet started.** This repository holds the project charter and the
-> clean-room rules. No implementation has landed.
+> clean-room rules. No implementation has landed. See [ROADMAP.md](ROADMAP.md)
+> for the plan.
 
 ## Why this exists
 
