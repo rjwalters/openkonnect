@@ -5,9 +5,10 @@ drive a **running KiCad 10** editor.
 
 openkonnect is the live-editor layer. Anything that works offline on
 `.kicad_*` files belongs in [kicad-tools](https://github.com/rjwalters/kicad-tools);
-openkonnect adds what only an open editor can offer: the IPC session, what the
-user is looking at and has selected, and edits that land in the open document
-with undo.
+openkonnect adds what only an open editor can offer: the IPC session, file
+sync so kicad-tools' file-based writes are safe next to an open editor (#4),
+what the user is looking at and has selected, and edits that land in the open
+document with undo.
 
 ## Principles
 
@@ -18,12 +19,16 @@ with undo.
 2. **Thin over kicad-tools.** Compute (parsing, checks, placement, routing,
    exports) lives in kicad-tools. openkonnect moves results into and out of
    the editor. When a feature here needs file-level logic, that logic goes
-   upstream into kicad-tools first.
+   upstream into kicad-tools first (#6).
 3. **The editor is the source of truth.** Read state from the live session
-   rather than the file on disk when they can differ. Never write a
-   `.kicad_*` file behind the editor's back while it has that document open.
-4. **Every edit is undoable.** Mutations go through IPC transactions, so one
-   agent action is one undo step in KiCad.
+   rather than the file on disk when they can differ. File-based tools (`kct`)
+   may write a `.kicad_*` file that is open in the editor only through the
+   handoff protocol (#4): check dirty state, save, let the tool write, then
+   reload. If the editor has unsaved changes, refuse unless the caller
+   explicitly allows a save or discard.
+4. **IPC edits are undoable.** Mutations made through IPC go through
+   transactions, so one agent action is one undo step in KiCad. A reload after
+   an external write is not an undo step; undoing it means reverting the file.
 5. **Fail fast and say why.** If KiCad isn't running, the document isn't open,
    or the IPC API can't do something, the tool returns a clear, structured
    error. It never hangs.
@@ -53,14 +58,27 @@ with undo.
 - [ ] **Bootstrap** (#2): `pyproject.toml` (uv, Python >= 3.10), the
       `openkonnect serve` MCP entry point, `session_status` and `board_summary`,
       clean errors when KiCad isn't running, CI on mocked IPC.
-- [ ] **IPC client decision**: build on kicad-tools' `kicad_tools.ipc` or on
-      KiCad's official Python IPC bindings. Record the license and the reason
-      in the repo.
+- [ ] **Live-editor file sync** (#4): dirty state per open document in
+      `session_status`, `save_before_external_write`, `sync_from_disk`, and the
+      documented handoff protocol (save, `kct` writes, reload), with an
+      end-to-end test that wraps one `kct` command such as `kct route`.
+- [ ] **IPC client decision** (#2): build on kicad-tools' `kicad_tools.ipc`,
+      KiCad's official Python IPC bindings, or KiCAD-MCP-Server's MIT IPC
+      backend (IPC parts only: no `pcbnew` SWIG, no AT-SPI). Record the
+      license and the reason in the repo.
+- [ ] **CLEANROOM.md amendment** (#7): MIT KiCAD-MCP-Server code may be reused
+      with attribution, kept separate from anything recalled from Konnect,
+      plus a `NOTICE` file listing it.
+- [ ] **kicad-tools boundary** (#6): `docs/architecture.md` with the
+      file-level vs live-editor rule and the list of gaps filed upstream, a
+      pinned kicad-tools version range in `pyproject.toml`, and a CI job that
+      runs against kicad-tools `main`.
 - [ ] A live-KiCad test harness: a marked test suite that runs against a real
       KiCad 10 locally, and fixture projects written for this repo.
 
 **Exit criteria**: an MCP client can connect, see which board and schematic are
-open, and get a summary of the board.
+open and whether they are dirty, get a summary of the board, and run a `kct`
+write next to the open editor without losing either side's changes.
 
 ## Phase 1: Live session and read-only inspection
 
@@ -69,8 +87,10 @@ open, and get a summary of the board.
 - [ ] Session: discover running instances, choose one, report KiCad version and
       which IPC API features it supports
 - [ ] Open documents, project paths, and whether the board in the editor
-      differs from the file on disk
-- [ ] Current selection: what is selected and its properties
+      differs from the file on disk (#4)
+- [ ] Current selection (#5): `get_selection` returns stable file-level
+      references (refdes, net names, `REF.PAD`, a bbox in mm board
+      coordinates) that can be passed straight to `kct`
 - [ ] Board queries: footprints, nets, tracks, vias, zones, layers, stackup,
       design rules, board outline
 - [ ] View state: active layer, visible layers, viewport
@@ -114,9 +134,14 @@ fixture board, and one undo reverts it.
 
 **Goal**: violations the agent can point the user at.
 
-- [ ] Run DRC, from KiCad or from kicad-tools on a snapshot, and return
-      structured results
-- [ ] Jump to a violation: select it, zoom to it, highlight it
+- [ ] Run DRC and return structured results. In-editor DRC is a quick
+      check only; sign-off is two-engine (#6): `kct check --mfr` and
+      `kicad-cli pcb drc --refill-zones`, both at 0 errors on the saved file.
+      openkonnect never reports a board as done from in-editor DRC alone.
+- [ ] Show findings (#5): `show_findings` reads kicad-tools' JSON findings
+      (no copied schema), then selects, highlights and zooms to them
+- [ ] Round-trip test (#5): selection → `kct` references → findings →
+      highlight lands on the same items
 - [ ] Explain violations in context, using kicad-tools' explanation and intent data
 - [ ] Re-check only what an edit touched, after each agent edit
 
@@ -133,8 +158,9 @@ Check the KiCad 10 API docs before scoping it.
 - [ ] Read the open schematic: sheets, symbols, nets, selection
 - [ ] Edit symbols, fields, wires and labels through transactions, if the API allows it
 - [ ] Cross-probe between schematic and board
-- [ ] Fallback when the API lacks schematic edits: kicad-tools edits the file,
-      and the editor is asked to reload, with that limitation stated clearly
+- [ ] Fallback when the API lacks schematic edits: kicad-tools edits the file
+      through the #4 handoff protocol (save, write, reload). The reload is not
+      an undo step, and that limitation is stated clearly
 
 **Exit criteria**: schematic capabilities match what the IPC API allows, and
 the gaps are documented.
@@ -147,7 +173,9 @@ Mostly delegation. Exports already exist in kicad-tools and `kicad-cli`.
 
 - [ ] Export gerbers, drill files, BOM, CPL and an assembly package from the
       current board state, saving first or snapshotting as needed
-- [ ] A pre-fab check (DRC, unrouted nets, missing fields) that runs before export
+- [ ] A pre-fab check that runs before export on the saved file: `kct check
+      --mfr` and `kicad-cli pcb drc --refill-zones`, both at 0 errors (#6),
+      plus unrouted nets and missing fields
 
 ## v1.0
 
@@ -157,6 +185,7 @@ Mostly delegation. Exports already exist in kicad-tools and `kicad-cli`.
 - Tested against a released KiCad 10.x on macOS, Linux and Windows.
 - Install docs for the common MCP clients.
 - Every implementation PR records its spec and a clean-room attestation.
+- No board is reported done without two-engine sign-off on the saved file (#6).
 
 ---
 
@@ -164,8 +193,8 @@ Mostly delegation. Exports already exist in kicad-tools and `kicad-cli`.
 
 | Question | Why it matters | Resolve by |
 |----------|----------------|------------|
-| Which IPC client library? | License and maintenance. kicad-tools already has a client. | Phase 0 |
+| Which IPC client library? | License and maintenance. Candidates: `kicad_tools.ipc`, KiCad's official bindings, KiCAD-MCP-Server's MIT IPC backend (#7) | Phase 0 (#2) |
 | What does KiCad 10's IPC API cover for the schematic editor? | Decides the scope of Phase 5 | Phase 0 spec |
-| How do we keep edits from colliding with the user editing at the same time? | Data loss and surprising undo history | Phase 2 |
+| How do we keep IPC edits from colliding with the user editing at the same time? | Data loss and surprising undo history. External file writes are covered by the #4 handoff protocol | Phase 2 |
 | How should live tests run in CI? | KiCad needs a display; headless support varies by platform | Phase 0 harness |
-| Where does file-level logic go when it's needed here? | Keeps the two repos from drifting apart | Ongoing: default is upstream into kicad-tools |
+| Where does file-level logic go when it's needed here? | Keeps the two repos from drifting apart | Decided (#6): it lives in kicad-tools; gaps are filed on rjwalters/kicad-tools and listed in `docs/architecture.md` |
