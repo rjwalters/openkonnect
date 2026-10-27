@@ -28,13 +28,18 @@ def test_tool_list():
     by_name = {t.name: t for t in tools.tools}
     assert sorted(by_name) == [
         "board_summary",
+        "get_selection",
         "run_kct_handoff",
         "save_before_external_write",
         "session_status",
+        "show_findings",
         "sync_from_disk",
     ]
-    for name in ("board_summary", "session_status"):
+    for name in ("board_summary", "session_status", "get_selection"):
         assert by_name[name].annotations.readOnlyHint is True
+    # show_findings changes only the editor selection: not read-only, not destructive.
+    assert by_name["show_findings"].annotations.readOnlyHint is False
+    assert by_name["show_findings"].annotations.destructiveHint is False
     for name in ("save_before_external_write", "sync_from_disk", "run_kct_handoff"):
         assert by_name[name].annotations.readOnlyHint is False
     assert by_name["sync_from_disk"].annotations.destructiveHint is True
@@ -62,3 +67,27 @@ def test_board_summary_error_over_mcp():
     _, result = _call(make_session(sockets=[], running=True, api_cfg=False), "board_summary")
     assert result.isError is True
     assert result.structuredContent["error"]["code"] == "ipc_disabled"
+
+
+def test_show_findings_over_mcp_accepts_a_kct_json_object():
+    from kicad_tools.validate.violations import DRCViolation
+
+    from .conftest import EditorFake
+
+    v = DRCViolation(
+        rule_id="courtyard_missing", severity="warning", message="", items=("R2",)
+    ).to_dict()
+    fake = EditorFake()
+
+    async def go():
+        server = build_server(make_session(fake))
+        async with create_connected_server_and_client_session(server._mcp_server) as client:
+            return await client.call_tool(
+                "show_findings", {"findings": {"violations": [v]}, "mode": "both", "focus": 0}
+            )
+
+    result = anyio.run(go)
+    assert result.isError is False, result.content
+    payload = result.structuredContent
+    assert payload["selection"]["footprints"] == ["R2"]
+    assert [u["part"] for u in payload["unsupported"]] == ["highlight"]
