@@ -1112,14 +1112,21 @@ made live.
 - **Sources:** P-T7.
 
 ### RTE-09 External autorouter round trip
-- **Class:** file-level · **kicad-tools:** partial. DSN export and SES import
-  exist; a Freerouting runner is an upstream gap, already filed as
-  rjwalters/kicad-tools#7991 · **KiCad:** n/a · **From:** P-T4, P-T6
+- **Class:** file-level · **kicad-tools:** declined upstream. The request for
+  a Freerouting runner, rjwalters/kicad-tools#7991, was closed as not planned
+  on 2026-10-27 · **KiCad:** n/a · **From:** P-T4, P-T6
 - **Purpose:** route with an external autorouter, and bring back only a
   result made for the same board revision.
-- **Status:** **deferred** until kicad-tools ships the runner. When it does,
-  the result is pushed with RTE-03.
-- **Sources:** P-T4, P-T6.
+- **Status:** **not specified; out of scope.** The kicad-tools operator ruled
+  that kct will not run Freerouting or any other external router. Its plan is
+  to improve its own router (`kct route` / `route-auto`) instead, and to keep
+  working on the board file so that LVS and the fab gates check the board that
+  ships. openkonnect follows that ruling and offers no external-router tool.
+  If an external router can finish a board that kct cannot, that is reported
+  upstream as a gap in kct's router, with the board and the nets that failed.
+  It is not a reason to add this tool. See
+  [Considered and not specified](#considered-and-not-specified).
+- **Sources:** P-T4, P-T6, P-T9.
 
 ---
 
@@ -1323,6 +1330,7 @@ Each of these was weighed, and left out of v0 for the reason given.
 | Parts search, datasheets, reference-circuit templates, symbol and footprint library authoring, project creation | File-level, and kicad-tools' job (`kct parts`, `kct datasheet`, MCP `adapt_pattern`, `kct lib`, `kct footprint`, `kct init`). openkonnect does not reimplement them. |
 | Server call logs for the agent's own debugging | Not in v0. kicad-tools' MCP has `get_recent_calls`. A later spec can add one if it is needed. |
 | Live schematic reading and editing | Waits for KiCad 11 (SCH-06, SCH-07). |
+| An external autorouter round trip, such as Freerouting (RTE-09) | Out of scope. kicad-tools declined a runner for it ([P-T9]): kct will not call any external router, and improves its own router instead. Boards that kct cannot route fully are reported upstream as router gaps, not handled by an external router. |
 
 ## Upstream gaps for kicad-tools
 
@@ -1336,7 +1344,11 @@ Under #6, they are filed on rjwalters/kicad-tools and listed in
 | G2 | A check limited to a region or a set of references | REV-07 |
 | G3 | A semantic diff between two board files | SES-12 |
 | G4 | Plot, 3D and alternative fabrication exports | MFG-03 |
-| G5 | A Freerouting runner (already filed: rjwalters/kicad-tools#7991) | RTE-09 |
+
+An earlier draft listed a fifth gap, a Freerouting runner. That request was
+already filed as rjwalters/kicad-tools#7991, and it was closed as not planned on
+2026-10-27 ([P-T9]). It is not an open gap. #6 should not file it again or list
+it in `docs/architecture.md`. RTE-09 is out of scope as a result.
 
 ## Coverage of #4 and #5
 
@@ -1389,9 +1401,10 @@ copied.
 | P-T3 | kicad-tools: design-rules audit (item 8) | https://github.com/rjwalters/kicad-tools/blob/6a844af6d/docs/konnect-item8-design-rules-audit.md | Free-text rule store not specified. States that it uses the mechanism as a reference only and reproduces no code, prompts or schema text. It does **not** explicitly say the source was unread, so it was used only for kicad-tools' own facts |
 | P-T4 | kicad-tools: Konnect v0.8 to v0.13 delta | https://github.com/rjwalters/kicad-tools/blob/6a844af6d/docs/research/konnect-v013-delta.md | Placement, visual baselines, DSN/SES provenance. Explicit statement: nothing copied **or read** from Konnect's source; its sources were the public release notes and ROADMAP |
 | P-T5 | kicad-tools: truth-contract audit | https://github.com/rjwalters/kicad-tools/blob/6a844af6d/docs/research/konnect-truth-contract-audit.md | C-5 and kicad-tools' observed-result fixes. Its statement says "ideas only… nothing here is copied" and points to P-T1. It does **not** explicitly say the source was unread, so it was used only for facts about kicad-tools' own outputs |
-| P-T6 | kicad-tools: KiCAD-MCP-Server evaluation, upstream `628d320f` | https://github.com/rjwalters/kicad-tools/blob/6a844af6d/docs/research/kicad-mcp-server-evaluation.md | KiCAD-MCP-Server tool inventory and the kicad-tools gaps (#7991). Its author read that MIT project's source; this spec uses only its capability-level tables |
+| P-T6 | kicad-tools: KiCAD-MCP-Server evaluation, upstream `628d320f` | https://github.com/rjwalters/kicad-tools/blob/6a844af6d/docs/research/kicad-mcp-server-evaluation.md | KiCAD-MCP-Server tool inventory and the kicad-tools gaps it identified. One of them, the Freerouting runner (#7991), was later declined; see P-T9. Its author read that MIT project's source; this spec uses only its capability-level tables |
 | P-T7 | kicad-tools CLI help, `kct` 0.24.0 (local run of `kct <command> --help`) | https://github.com/rjwalters/kicad-tools (main at `6a844af6d`) | Every "already in kicad-tools" citation |
 | P-T8 | kicad-tools MCP tool registry (names only) | https://github.com/rjwalters/kicad-tools/tree/6a844af6d/src/kicad_tools/mcp/tools | MCP tool names cited in the kicad-tools column |
+| P-T9 | kicad-tools #7991 (Freerouting runner), closed as not planned, with the operator's ruling of 2026-10-27 | https://github.com/rjwalters/kicad-tools/issues/7991 | RTE-09 out of scope, and G5 withdrawn: kct runs no external router, and boards it cannot route become router-gap reports |
 
 **Unreachable or not used.**
 - `https://docs.kicad.org/kicad-python/` (2026-10-27) returned a page with no
