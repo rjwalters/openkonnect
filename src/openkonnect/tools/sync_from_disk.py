@@ -53,8 +53,26 @@ SCHEMATIC_INSTRUCTIONS = (
 )
 
 
-def _discarded(ds: DirtyState) -> bool | str:
+def _discarded(ds: DirtyState, snapshot_match: bool = False) -> bool | str:
+    if snapshot_match:
+        return False
     return "unknown" if ds.dirty == "unknown" else bool(ds.dirty)
+
+
+def _snapshot_match(ds: DirtyState, snapshot_sha256: str | None) -> bool:
+    """Whether the editor, read by this call, still holds the handoff's own save.
+
+    Only ``run_kct_handoff`` passes ``snapshot_sha256``: the hash of the content
+    it saved itself, in the same call, at its step 2. It is never a caller
+    value (``server.py`` does not expose it). A match relaxes ``unknown`` only;
+    a changed editor (``True``) is still refused.
+    """
+    return (
+        snapshot_sha256 is not None
+        and ds.dirty == "unknown"
+        and ds.editor_sha256 is not None
+        and ds.editor_sha256 == snapshot_sha256
+    )
 
 
 def sync_from_disk(
@@ -63,7 +81,14 @@ def sync_from_disk(
     discard_unsaved: bool = False,
     expected_hash: str | None = None,
     editor_hash: str | None = None,
+    *,
+    handoff_snapshot_sha256: str | None = None,
 ) -> dict[str, Any]:
+    """SES-05. ``handoff_snapshot_sha256`` is internal to ``run_kct_handoff``.
+
+    It is keyword-only and not registered as an MCP argument, so no caller of the
+    public tool can supply it. See ``_snapshot_match``.
+    """
     want_board, want_sch = parse_documents(documents)
     boards = open_boards_or_fail(session, "board" if want_board else "schematic")
 
@@ -83,7 +108,7 @@ def sync_from_disk(
         )
 
     # Phase 1: check every board before touching any, so a refusal changes nothing.
-    plans: list[tuple[BoardRef, dict[str, Any], DirtyState]] = []
+    plans: list[tuple[BoardRef, dict[str, Any], DirtyState, bool]] = []
     if want_board:
         for ref in boards:
             fs = file_state(ref.path)
@@ -110,26 +135,28 @@ def sync_from_disk(
             # caller's editor_hash can only show an edit (True), never prove clean.
             # Issue #15.
             ds = board_dirty_state(session, ref, editor_baseline_sha256=editor_hash)
-            plans.append((ref, fs, ds))
+            plans.append((ref, fs, ds, _snapshot_match(ds, handoff_snapshot_sha256)))
 
-    protected = [ds for _, _, ds in plans if ds.must_protect]
+    protected = [ds for _, _, ds, snap in plans if ds.must_protect and not snap]
     if protected and not discard_unsaved:
         records = [
             {
                 "kind": "board",
                 "path": ref.path,
                 "state_before": ds.record(),
-                "action": "refused" if ds.must_protect else "none",
+                "action": "refused" if ds.must_protect and not snap else "none",
             }
-            for ref, _, ds in plans
+            for ref, _, ds, snap in plans
         ]
         if any(ds.dirty is True for ds in protected):
             raise E.document_dirty(records, flag="discard_unsaved")
         raise E.dirty_state_unknown(records, flag="discard_unsaved")
 
     # Phase 2: reload.
-    for ref, fs, ds in plans:
+    for ref, fs, ds, snap in plans:
         rec: dict[str, Any] = {"kind": "board", "path": ref.path, "state_before": ds.record()}
+        if snap:
+            rec["reload_basis"] = "handoff_snapshot"
         before_sha = ds.editor_sha256
         try:
             session.call(lambda b, ref=ref: b.revert_board(ref))
@@ -179,7 +206,7 @@ def sync_from_disk(
         rec.update(
             action="reloaded",
             reloaded=True,
-            discarded_unsaved=_discarded(ds),
+            discarded_unsaved=_discarded(ds, snap),
             view_kept="unknown",
             view_note=VIEW_NOTE,
             verified=verified,

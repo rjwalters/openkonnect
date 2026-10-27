@@ -26,13 +26,46 @@ it for you. Any other tool can follow the same steps by hand with
    file).
 5. **Check the file.** If its hash is the one from step 2, skip the reload.
 6. **Reload.** `sync_from_disk` with `expected_hash` (the file's hash after
-   step 3) and `editor_hash` (`editor_sha256` from step 2). If the user edited
-   the board while the command ran, this refuses with `document_dirty`. If the
-   editor is unchanged, it still refuses with `dirty_state_unknown` unless
-   `discard_unsaved` is set: once the file holds the command's output, no
-   recorded hash can prove the editor holds nothing the file lacks.
+   step 3) and `editor_hash` (`editor_sha256` from step 2). `run_kct_handoff`
+   also applies the **snapshot rule** below, so a clean handoff reloads
+   without `discard_unsaved`. If the user edited the board while the command
+   ran, the reload refuses with `document_dirty`, and the result reports both
+   the command's outcome and the refusal.
 7. **Report.** One record per step, the command's exit code and JSON output,
    and the final document state.
+
+### The snapshot rule (`run_kct_handoff` only)
+
+Within one `run_kct_handoff` call, step 2 saves the editor (or proves the
+editor text byte-identical to the file) and records the hash of that exact
+content. This snapshot is taken by the tool itself; it is never an argument
+and no caller value can stand in for it. At step 6, openkonnect reads the
+editor text fresh:
+
+- **It hashes to the snapshot:** nothing changed in KiCad while the command
+  ran, so the editor holds only what step 2 saved. The reload goes ahead
+  without `discard_unsaved`, and the result reports `snapshot_matched: true`
+  and `discarded_unsaved: false`.
+- **It differs from the snapshot:** someone edited the board during the
+  command. The reload refuses with `document_dirty`, changes nothing, and
+  reports the command's result too, so you can choose what to keep.
+  `discard_unsaved` overrides this: the reload goes ahead and the result says
+  `discarded_unsaved: true`.
+- **No snapshot** (KiCad did not serve the text at step 2, or it did not match
+  the saved file): the reload refuses with `dirty_state_unknown` unless
+  `discard_unsaved` is set.
+
+A plain `sync_from_disk` call has no snapshot. There, `editor_hash` can only
+detect an edit (`document_dirty`); after an external write an unchanged editor
+is still `dirty_state_unknown`, and the reload needs `discard_unsaved`.
+
+**The window that remains.** If, while the command runs, the human saves an
+edit from KiCad and then undoes it exactly, the editor matches the snapshot
+again, while the file now holds the human's save (which replaced the
+command's output). The snapshot matches, so the reload loads the human's
+saved file into the editor. The human's edit is kept on disk and in the
+editor; the command's output, already overwritten by that save, is not. No
+read of KiCad 10's API can tell this case apart from a clean run.
 
 The reload is **not an undo step**. Ctrl+Z in KiCad will not bring back the
 editor's earlier state. To go back, restore the earlier file and run
@@ -106,13 +139,13 @@ What this means on KiCad 10:
   `sync_from_disk` reports it as `manual_reload_required` with instructions.
   `run_kct_handoff` covers the board only.
 - **The board.** After an external write, the editor and the file normally
-  differ, so a reload without `discard_unsaved` refuses with
-  `dirty_state_unknown`, also in `run_kct_handoff`. This is the intended,
-  honest behaviour: KiCad 10 cannot say whether the editor holds unsaved work.
-  Pass `editor_hash` (the `editor_sha256` from the save step) so that an edit
-  made since is refused with `document_dirty`, and pass `discard_unsaved` once
-  you know the editor holds nothing you need. With `discard_unsaved`, that
-  edit is discarded too.
+  differ, so a plain `sync_from_disk` without `discard_unsaved` refuses with
+  `dirty_state_unknown`: KiCad 10 cannot say whether the editor holds unsaved
+  work. Pass `editor_hash` (the `editor_sha256` from the save step) so that an
+  edit made since is refused with `document_dirty`. `discard_unsaved` reloads
+  in either case and discards that edit; it never reports the edit first.
+  `run_kct_handoff` does not need `discard_unsaved` for a clean run: it uses
+  its own snapshot (see "The snapshot rule").
 - **Verification.** After a reload, openkonnect reads the editor back. If its
   text equals the file, `verified` is `true`. A file written by another tool
   is usually formatted differently from KiCad's own output, so `verified` is
@@ -130,7 +163,7 @@ running KiCad. The live test below is the check against a real editor.
 |---|---|---|---|
 | `allow_save` | `save_before_external_write`, `run_kct_handoff` | false | Save a board that is dirty or `unknown`. Without it, such a board is refused and nothing is saved |
 | `schematic_unverified_ok` | `save_before_external_write` | false | You state that the schematic is saved or closed. The result records that you asserted it |
-| `discard_unsaved` | `sync_from_disk`, `run_kct_handoff` | false | Reload even if the editor may hold unsaved work, which is then lost |
+| `discard_unsaved` | `sync_from_disk`, `run_kct_handoff` | false | Reload even if the editor may hold unsaved work, which is then lost. Not needed for a clean `run_kct_handoff`. With it, an edit made during the command is discarded without being reported first |
 | `expected_hash` | `sync_from_disk` | none | Refuse with `stale_input` if the file's hash differs (a third party may have written it) |
 | `editor_hash` | `sync_from_disk` | none | Baseline for content comparison; normally `editor_sha256` from the save. It can only show the editor changed (`true`) or leave `unknown`, never give `false` |
 | `documents` | all three | the board | `"board"`, `"schematic"`, `"all"` or a list. The default is what KiCad reports open, which on KiCad 10 is the board |
@@ -164,8 +197,8 @@ A failure names the step in `failed_step` and keeps the step records so far.
 | `unsupported_on_this_kicad` (schematic) | The schematic cannot be checked on KiCad 10 | Save or close it in KiCad, then pass `schematic_unverified_ok`, or request only the board |
 | `save_failed` | KiCad refused to save, or reported success but the file did not change | Check the path and permissions, and any open dialog in KiCad. Do not run the file tool |
 | `kicad_tools_failed` / `timeout` at the command | The command failed, was stopped, or could not be run (step outcome `failed_to_start` or `runner_error`) | The editor was not touched. If `file_changed` is true, restore the file (it may be partial) or rerun the command |
-| `document_dirty` at reload | The user edited during the command. The file holds the command's output, and the editor holds the user's edits | Choose one: save from KiCad (keeps the edits, drops the command's output), or `sync_from_disk` with `discard_unsaved` (keeps the output, drops the edits). Then rerun the handoff if needed |
-| `dirty_state_unknown` at reload | The editor differs from the file and openkonnect cannot prove it holds nothing the file lacks. This is the normal result after a command changed the file | `discard_unsaved` if the editor holds nothing you need (pass `editor_hash` too, so an edit is still reported first), or save from KiCad to keep the editor's state |
+| `document_dirty` at reload | The editor changed since the save: in `run_kct_handoff`, the user edited during the command (the editor no longer matches the step-2 snapshot). The file holds the command's output, and the editor holds the user's edits. The command's result is reported too | Choose one: save from KiCad (keeps the edits, drops the command's output), or `sync_from_disk` with `discard_unsaved` (keeps the output, drops the edits). Then rerun the handoff if needed |
+| `dirty_state_unknown` at reload | The editor differs from the file and openkonnect cannot prove it holds nothing the file lacks. This is the normal result of a plain `sync_from_disk` after an external write; in `run_kct_handoff` it happens only when step 2 could not take a snapshot | Save from KiCad to keep the editor's state, or pass `discard_unsaved` if the editor holds nothing you need. With `discard_unsaved` nothing is reported first: an edit made since, if any, is discarded |
 | `stale_input` | The file's hash is not the expected one | Something else wrote the file. Inspect it before syncing |
 | `not_found` | The board file is missing | Restore it. The editor is untouched |
 | `reload_failed` | KiCad rejected the file (for example it does not parse). `editor_state: "previous"` means the editor still holds its earlier state | Fix or restore the file, then sync again |

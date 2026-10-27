@@ -221,5 +221,5 @@ def save_before_external_write(
         "next": "Run the file-based tool, then call sync_from_disk with expected_hash (the "
         "file SHA-256 after the tool ran) and editor_hash (editor_sha256 from this result). "
         "editor_hash can only detect an edit made in KiCad since; it cannot prove the board "
-        "clean, so a reload after the file changed needs discard_unsaved=true.",
+        "clean. run_kct_handoff runs these steps and checks its own save itself.",
     }

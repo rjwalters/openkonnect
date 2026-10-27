@@ -340,3 +340,32 @@ def test_board_dirty_state_file_missing_is_never_clean(tmp_path):
     Path(ref.path).unlink()
     ds = dirty_state(fake, ref, editor_baseline_sha256=sha(FILE_TEXT))
     assert ds.dirty == "unknown"
+
+
+def test_public_sync_with_the_saved_editor_hash_stays_unknown(tmp_path):
+    # The handoff's snapshot rule is internal: the public tool, given the saved
+    # editor_sha256 as editor_hash after an external write, still refuses with
+    # dirty_state_unknown. Issue #15.
+    from openkonnect.tools.save_before_external_write import save_before_external_write
+
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    session = make_session(fake)
+    saved = session.run_tool(lambda s: save_before_external_write(s, "board"))
+    Path(ref.path).write_text(KCT_TEXT)
+    r = sync(session, editor_hash=saved["documents"][0]["editor_sha256"])
+    assert r["ok"] is False, r
+    assert r["error"]["code"] == "dirty_state_unknown"
+    assert "revert_board" not in fake.calls
+    assert fake.editor == FILE_TEXT
+
+
+def test_snapshot_never_relaxes_a_changed_editor(tmp_path):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref, EDITED_TEXT)
+    Path(ref.path).write_text(KCT_TEXT)
+    snap = sha(FILE_TEXT)
+    r = sync(make_session(fake), editor_hash=snap, handoff_snapshot_sha256=snap)
+    assert r["ok"] is False, r
+    assert r["error"]["code"] == "document_dirty"
+    assert "revert_board" not in fake.calls
