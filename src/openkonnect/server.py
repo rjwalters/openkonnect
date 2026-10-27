@@ -1,4 +1,9 @@
-"""The MCP server: exactly two tools, ``session_status`` and ``board_summary``."""
+"""The MCP server.
+
+Read-only: ``session_status`` (SES-01) and ``board_summary`` (LAY-01).
+File sync (#4): ``save_before_external_write`` (SES-04), ``sync_from_disk``
+(SES-05) and ``run_kct_handoff`` (SES-06).
+"""
 
 from __future__ import annotations
 
@@ -13,7 +18,10 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from . import __version__
 from .session import Session
 from .tools import board_summary as board_summary_mod
+from .tools import run_kct_handoff as handoff_mod
+from .tools import save_before_external_write as save_mod
 from .tools import session_status as session_status_mod
+from .tools import sync_from_disk as sync_mod
 
 INSTRUCTIONS = (
     "openkonnect drives a running KiCad 10 through its IPC API. Call session_status "
@@ -23,6 +31,10 @@ INSTRUCTIONS = (
 )
 
 _READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
+#: Saving writes the board file but never loses editor state.
+_SAVES = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+#: Reloading can discard unsaved editor state (only with discard_unsaved).
+_RELOADS = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False)
 
 
 def _to_result(payload: dict[str, Any]) -> CallToolResult:
@@ -61,5 +73,63 @@ def build_server(session: Session | None = None) -> FastMCP:
     )
     async def board_summary() -> CallToolResult:
         return await run(board_summary_mod.board_summary)
+
+    @mcp.tool(
+        name="save_before_external_write",
+        description=save_mod.DESCRIPTION,
+        annotations=_SAVES,
+        structured_output=False,
+    )
+    async def save_before_external_write(
+        documents: str | list[str] | None = None,
+        allow_save: bool = False,
+        schematic_unverified_ok: bool = False,
+    ) -> CallToolResult:
+        return await run(
+            lambda s: save_mod.save_before_external_write(
+                s, documents, allow_save, schematic_unverified_ok
+            )
+        )
+
+    @mcp.tool(
+        name="sync_from_disk",
+        description=sync_mod.DESCRIPTION,
+        annotations=_RELOADS,
+        structured_output=False,
+    )
+    async def sync_from_disk(
+        documents: str | list[str] | None = None,
+        discard_unsaved: bool = False,
+        expected_hash: str | None = None,
+        editor_hash: str | None = None,
+    ) -> CallToolResult:
+        return await run(
+            lambda s: sync_mod.sync_from_disk(
+                s, documents, discard_unsaved, expected_hash, editor_hash
+            )
+        )
+
+    @mcp.tool(
+        name="run_kct_handoff",
+        description=handoff_mod.DESCRIPTION,
+        annotations=_RELOADS,
+        structured_output=False,
+    )
+    async def run_kct_handoff(
+        command: list[str],
+        documents: str | list[str] | None = None,
+        allow_save: bool = False,
+        discard_unsaved: bool = False,
+        timeout_s: float = handoff_mod.DEFAULT_COMMAND_TIMEOUT_S,
+    ) -> CallToolResult:
+        # Not wrapped in run_tool: each IPC step is bounded on its own, the
+        # command by timeout_s, and the session lock is free while kct runs.
+        payload = await anyio.to_thread.run_sync(
+            lambda: handoff_mod.run_kct_handoff(
+                session, command, documents, allow_save, discard_unsaved, timeout_s
+            ),
+            abandon_on_cancel=True,
+        )
+        return _to_result(payload)
 
     return mcp

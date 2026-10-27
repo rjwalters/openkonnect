@@ -1,4 +1,4 @@
-"""MCP level: the server lists exactly two tools and answers over the protocol."""
+"""MCP level: the server lists its tools and answers over the protocol."""
 
 from __future__ import annotations
 
@@ -23,12 +23,22 @@ def _call(session, tool: str):
     return anyio.run(go)
 
 
-def test_exactly_two_tools():
+def test_tool_list():
     tools, _ = _call(make_session(sockets=[], running=False), "session_status")
-    names = sorted(t.name for t in tools.tools)
-    assert names == ["board_summary", "session_status"]
+    by_name = {t.name: t for t in tools.tools}
+    assert sorted(by_name) == [
+        "board_summary",
+        "run_kct_handoff",
+        "save_before_external_write",
+        "session_status",
+        "sync_from_disk",
+    ]
+    for name in ("board_summary", "session_status"):
+        assert by_name[name].annotations.readOnlyHint is True
+    for name in ("save_before_external_write", "sync_from_disk", "run_kct_handoff"):
+        assert by_name[name].annotations.readOnlyHint is False
+    assert by_name["sync_from_disk"].annotations.destructiveHint is True
     for t in tools.tools:
-        assert t.annotations.readOnlyHint is True
         assert t.description
 
 
