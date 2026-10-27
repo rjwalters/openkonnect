@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly run so kicad-tools main drift shows up even when this repo is quiet.
+  schedule:
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
@@ -33,3 +36,24 @@ jobs:
       # Unit tests on mocked IPC. There is no KiCad on the runner, so the
       # live_kicad tests skip; -rs prints each skip and its reason.
       - run: uv run pytest -rs
+
+  # Early warning for kicad-tools API breaks (#6, docs/architecture.md). Runs
+  # the suite against kicad-tools main instead of the pinned release. It never
+  # blocks a merge: continue-on-error, and it is not a required check. A
+  # failure means filing an issue on rjwalters/kicad-tools or adjusting the
+  # pin in pyproject.toml.
+  kicad-tools-main:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - name: Install kicad-tools from main over the locked environment
+        run: uv pip install --reinstall-package kicad-tools "kicad-tools @ git+https://github.com/rjwalters/kicad-tools@main"
+      - name: Show the kicad-tools under test
+        run: |
+          uv pip show kicad-tools
+          uv pip freeze | grep -i '^kicad-tools'
+      # --no-sync keeps uv run from reverting to the locked release.
+      - run: uv run --no-sync pytest -rs

@@ -69,7 +69,7 @@ document with undo.
 - [ ] **CLEANROOM.md amendment** (#7): MIT KiCAD-MCP-Server code may be reused
       with attribution, kept separate from anything recalled from Konnect,
       plus a `NOTICE` file listing it.
-- [ ] **kicad-tools boundary** (#6): `docs/architecture.md` with the
+- [x] **kicad-tools boundary** (#6): `docs/architecture.md` with the
       file-level vs live-editor rule and the list of gaps filed upstream, a
       pinned kicad-tools version range in `pyproject.toml`, and a CI job that
       runs against kicad-tools `main`.
