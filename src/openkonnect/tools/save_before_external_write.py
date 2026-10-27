@@ -219,5 +219,7 @@ def save_before_external_write(
         "allow_save": allow_save,
         "schematic_unverified_ok": schematic_unverified_ok,
         "next": "Run the file-based tool, then call sync_from_disk with expected_hash (the "
-        "file SHA-256 after the tool ran) and editor_hash (editor_sha256 from this result).",
+        "file SHA-256 after the tool ran), editor_hash (editor_sha256 from this result) "
+        "and editor_file_hash (sha256 from this result). editor_hash without "
+        "editor_file_hash cannot prove the board clean.",
     }

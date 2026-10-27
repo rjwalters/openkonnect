@@ -156,6 +156,69 @@ def test_user_edit_during_command_refuses_at_step_6(tmp_path):
     assert Path(ref.path).read_text() == KCT_TEXT
 
 
+def test_handoff_binds_editor_hash_to_the_saved_file(tmp_path, monkeypatch):
+    from openkonnect.tools import run_kct_handoff as handoff_mod
+
+    seen = {}
+    real = handoff_mod.sync_from_disk
+
+    def spy(session, *a, **kw):
+        seen.update(kw)
+        return real(session, *a, **kw)
+
+    monkeypatch.setattr(handoff_mod, "sync_from_disk", spy)
+    ref = board_on_disk(tmp_path)
+    r = handoff(make_session(SyncFake(ref)))
+    assert r["ok"] is True, r
+    assert seen["editor_file_hash"] == r["steps"][1]["sha256"]
+    assert seen["expected_hash"] == r["steps"][2]["sha256_after"]
+    assert r["steps"][5]["discarded_unsaved"] is False
+
+
+def raising(exc):
+    def runner(argv, timeout_s, cwd):
+        raise exc
+
+    return runner
+
+
+@pytest.mark.parametrize("exc", [RuntimeError("boom"), ValueError("bad value")])
+def test_runner_error_is_kicad_tools_failed_without_reload(tmp_path, exc):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    r = handoff(make_session(fake), raising(exc))
+    assert r["ok"] is False
+    assert r["failed_step"] == "kct"
+    assert r["error"]["code"] == "kicad_tools_failed"
+    assert r["error"]["details"]["exception"] == type(exc).__name__
+    assert r["error"]["details"]["message"] == str(exc)
+    assert r["steps"][-1] == {"step": 3, "name": "kct", "outcome": "runner_error"}
+    assert r["command"][0] == "kct"
+    assert "revert_board" not in fake.calls
+
+
+def test_runner_oserror_is_failed_to_start(tmp_path):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    r = handoff(make_session(fake), raising(FileNotFoundError("no kct")))
+    assert r["error"]["code"] == "kicad_tools_failed"
+    assert r["steps"][-1]["outcome"] == "failed_to_start"
+    assert "revert_board" not in fake.calls
+
+
+def test_runner_openkonnect_error_passes_through(tmp_path):
+    from openkonnect.errors import ErrorCode, OpenKonnectError
+
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    err = OpenKonnectError(ErrorCode.TIMEOUT, "runner gave up", details={"x": 1})
+    r = handoff(make_session(fake), raising(err))
+    assert r["ok"] is False
+    assert r["failed_step"] == "kct"
+    assert r["error"] == err.to_dict()
+    assert "revert_board" not in fake.calls
+
+
 def test_command_failure_stops_without_reload(tmp_path):
     ref = board_on_disk(tmp_path)
     fake = SyncFake(ref)

@@ -134,10 +134,11 @@ def build_server(session: Session | None = None) -> FastMCP:
         discard_unsaved: bool = False,
         expected_hash: str | None = None,
         editor_hash: str | None = None,
+        editor_file_hash: str | None = None,
     ) -> CallToolResult:
         return await run(
             lambda s: sync_mod.sync_from_disk(
-                s, documents, discard_unsaved, expected_hash, editor_hash
+                s, documents, discard_unsaved, expected_hash, editor_hash, editor_file_hash
             )
         )
 

@@ -259,6 +259,11 @@ def run_kct_handoff(
     t0 = time.monotonic()
     try:
         res = (runner or default_runner)(full, float(timeout_s), _cwd(out["board"]))
+    except OpenKonnectError as e:
+        # A runner that already speaks openkonnect's error model: pass its error
+        # through unchanged, inside the handoff envelope.
+        steps.append({"step": 3, "name": "kct", "outcome": "runner_error"})
+        return fail("kct", e)
     except OSError as e:
         steps.append({"step": 3, "name": "kct", "outcome": "failed_to_start"})
         return fail(
@@ -267,6 +272,17 @@ def run_kct_handoff(
                 ErrorCode.KICAD_TOOLS_FAILED,
                 "kct could not be started. See details.",
                 details={"exception": str(e)},
+            ),
+        )
+    except Exception as e:  # noqa: BLE001 - any runner failure must stop the handoff
+        steps.append({"step": 3, "name": "kct", "outcome": "runner_error"})
+        return fail(
+            "kct",
+            OpenKonnectError(
+                ErrorCode.KICAD_TOOLS_FAILED,
+                "Running kct failed with an unexpected error, so the editor was not "
+                "reloaded. See details.",
+                details={"exception": type(e).__name__, "message": str(e)},
             ),
         )
     after = file_state(board_path)
@@ -333,6 +349,7 @@ def run_kct_handoff(
             discard_unsaved=discard_unsaved,
             expected_hash=after["sha256"],
             editor_hash=saved["editor_sha256"],
+            editor_file_hash=saved["sha256"],
         )
     )
     if not r["ok"]:

@@ -297,7 +297,11 @@ control, and grouping edits into transactions. Every entry here is live-editor.
   - `expected_hash`: optional, normally from SES-04.
 - **Behaviour:**
   - If the editor is dirty or `unknown` and `discard_unsaved` is not set,
-    refuse and change nothing.
+    refuse and change nothing. A caller-supplied `editor_hash` (the editor
+    content hash from SES-04) can only show the editor changed or leave the
+    state `unknown`; it proves the editor clean only when bound to the file by
+    `editor_file_hash` (SES-04's file `sha256`) matching a fresh read of the
+    file, or by a verified `expected_hash`.
   - Otherwise reload the document from disk, keeping the view (zoom, pan,
     layers) where KiCad allows.
   - Afterwards, check that the editor content matches the file.
