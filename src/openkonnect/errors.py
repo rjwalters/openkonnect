@@ -27,6 +27,13 @@ class ErrorCode(str, Enum):
     TIMEOUT = "timeout"
     INSTANCE_CHANGED = "instance_changed"
     NO_DOCUMENT = "no_document"
+    DOCUMENT_DIRTY = "document_dirty"
+    DIRTY_STATE_UNKNOWN = "dirty_state_unknown"
+    NOT_FOUND = "not_found"
+    STALE_INPUT = "stale_input"
+    SAVE_FAILED = "save_failed"
+    RELOAD_FAILED = "reload_failed"
+    KICAD_TOOLS_FAILED = "kicad_tools_failed"
     UNSUPPORTED_ON_THIS_KICAD = "unsupported_on_this_kicad"
     INVALID_ARGUMENT = "invalid_argument"
     INTERNAL = "internal_error"
@@ -52,6 +59,13 @@ _RETRYABLE = {
     ErrorCode.TIMEOUT: True,
     ErrorCode.INSTANCE_CHANGED: True,
     ErrorCode.NO_DOCUMENT: False,
+    ErrorCode.DOCUMENT_DIRTY: False,
+    ErrorCode.DIRTY_STATE_UNKNOWN: False,
+    ErrorCode.NOT_FOUND: False,
+    ErrorCode.STALE_INPUT: False,
+    ErrorCode.SAVE_FAILED: False,
+    ErrorCode.RELOAD_FAILED: False,
+    ErrorCode.KICAD_TOOLS_FAILED: False,
     ErrorCode.UNSUPPORTED_ON_THIS_KICAD: False,
     ErrorCode.INVALID_ARGUMENT: False,
     ErrorCode.INTERNAL: False,
@@ -144,4 +158,33 @@ def no_document(kind: str = "board", **details: Any) -> OpenKonnectError:
         f"No {kind} is open in KiCad. Open the {kind} in KiCad's editor, then call this "
         "tool again.",
         details={"kind": kind, **details},
+    )
+
+
+def invalid_argument(message: str, **details: Any) -> OpenKonnectError:
+    return OpenKonnectError(ErrorCode.INVALID_ARGUMENT, message, details=details)
+
+
+def unsupported(message: str, min_kicad: str | None = None, **details: Any) -> OpenKonnectError:
+    if min_kicad is not None:
+        details = {"min_kicad": min_kicad, **details}
+    return OpenKonnectError(ErrorCode.UNSUPPORTED_ON_THIS_KICAD, message, details=details)
+
+
+def document_dirty(documents: list[dict[str, Any]], **details: Any) -> OpenKonnectError:
+    return OpenKonnectError(
+        ErrorCode.DOCUMENT_DIRTY,
+        "The editor holds changes that are not in the file on disk, so nothing was done. "
+        "Save or discard them in KiCad (or pass the flag named in details.flag), then retry.",
+        details={"documents": documents, **details},
+    )
+
+
+def dirty_state_unknown(documents: list[dict[str, Any]], **details: Any) -> OpenKonnectError:
+    return OpenKonnectError(
+        ErrorCode.DIRTY_STATE_UNKNOWN,
+        "openkonnect could not rule out unsaved changes in the editor (KiCad 10 has no "
+        "dirty-state query), so nothing was done. Save in KiCad, or pass the flag named "
+        "in details.flag if losing or saving the editor state is acceptable.",
+        details={"documents": documents, **details},
     )

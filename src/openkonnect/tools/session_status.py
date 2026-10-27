@@ -12,6 +12,7 @@ from typing import Any
 from ..backend import client_api_version
 from ..session import Session
 from .common import DIRTY_UNKNOWN_NOTE, board_document, inferred_schematic
+from .run_kct_handoff import find_kct
 
 DESCRIPTION = (
     "Report whether KiCad is running and its IPC API reachable, the KiCad and API "
@@ -24,7 +25,17 @@ _STATIC_CAPABILITIES = {
     "session_status": {"supported": True},
     "dirty_state_query": {
         "supported": False,
-        "reason": "KiCad 10's IPC API has no modified-since-save query (KiCad 11).",
+        "reason": "KiCad 10's IPC API has no modified-since-save query (KiCad 11). "
+        "session_status reports dirty 'unknown'; save_before_external_write and "
+        "sync_from_disk compare the editor's native-format text instead "
+        "(dirty_basis 'content_comparison') where that proves the state.",
+        "min_kicad": "11",
+    },
+    "schematic_save_reload": {
+        "supported": False,
+        "reason": "KiCad 10's IPC API cannot save or reload the schematic (KiCad 11). "
+        "save_before_external_write refuses it unless schematic_unverified_ok; "
+        "sync_from_disk reports manual_reload_required.",
         "min_kicad": "11",
     },
     "live_schematic": {
@@ -33,6 +44,15 @@ _STATIC_CAPABILITIES = {
         "min_kicad": "11",
     },
 }
+
+
+#: Tools that need a reachable KiCad with a board open.
+_BOARD_TOOLS = (
+    "board_summary",
+    "save_before_external_write",
+    "sync_from_disk",
+    "run_kct_handoff",
+)
 
 
 def session_status(session: Session) -> dict[str, Any]:
@@ -56,11 +76,12 @@ def session_status(session: Session) -> dict[str, Any]:
     if not probe.ipc_reachable:
         assert probe.reason is not None
         result["reason"] = probe.reason.to_dict()
-        capabilities["board_summary"] = {
-            "supported": False,
-            "reason": probe.reason.message,
-            "error_code": probe.reason.code.value,
-        }
+        for tool in _BOARD_TOOLS:
+            capabilities[tool] = {
+                "supported": False,
+                "reason": probe.reason.message,
+                "error_code": probe.reason.code.value,
+            }
         result["capabilities"] = capabilities
         return result
 
@@ -79,10 +100,17 @@ def session_status(session: Session) -> dict[str, Any]:
         result["dirty_note"] = DIRTY_UNKNOWN_NOTE
     result["documents"] = docs
 
-    capabilities["board_summary"] = (
-        {"supported": True}
-        if boards
-        else {"supported": False, "reason": "No board is open.", "error_code": "no_document"}
-    )
+    for tool in _BOARD_TOOLS:
+        capabilities[tool] = (
+            {"supported": True}
+            if boards
+            else {"supported": False, "reason": "No board is open.", "error_code": "no_document"}
+        )
+    if boards and find_kct() is None:
+        capabilities["run_kct_handoff"] = {
+            "supported": False,
+            "reason": "The kct executable (kicad-tools) was not found on PATH.",
+            "error_code": "kicad_tools_failed",
+        }
     result["capabilities"] = capabilities
     return result

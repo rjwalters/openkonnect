@@ -45,6 +45,18 @@ class IpcBackend(Protocol):
 
     def board_data(self, ref: BoardRef) -> dict[str, Any]: ...
 
+    def board_text(self, ref: BoardRef) -> str:
+        """The open board as KiCad native-format text, including unsaved changes."""
+        ...
+
+    def save_board(self, ref: BoardRef) -> None:
+        """Ask the PCB editor to save the board to its own file."""
+        ...
+
+    def revert_board(self, ref: BoardRef) -> None:
+        """Ask the PCB editor to reload the board from its file, dropping unsaved changes."""
+        ...
+
     def close(self) -> None: ...
 
 
@@ -115,12 +127,32 @@ class KipyBackend:
 
     # -- board -------------------------------------------------------------
 
-    def board_data(self, ref: BoardRef) -> dict[str, Any]:
+    def _board(self, ref: BoardRef) -> Any:
         from kipy.board import Board
+
+        return Board(self._kicad._client, ref.handle)
+
+    # File sync (#4). kicad-python 0.8 documents these three Board methods,
+    # each one IPC request, with no KiCad 11 restriction:
+    #   Board.get_as_string() -> SaveDocumentToString
+    #   Board.save()          -> SaveDocument
+    #   Board.revert()        -> RevertDocument
+    # There is no "modified since last save" query in 0.8 (KiCad 11 only).
+
+    def board_text(self, ref: BoardRef) -> str:
+        return self._board(ref).get_as_string()
+
+    def save_board(self, ref: BoardRef) -> None:
+        self._board(ref).save()
+
+    def revert_board(self, ref: BoardRef) -> None:
+        self._board(ref).revert()
+
+    def board_data(self, ref: BoardRef) -> dict[str, Any]:
         from kipy.board_types import ArcTrack
         from kipy.proto.board.board_types_pb2 import BoardLayer, ZoneType
 
-        board = Board(self._kicad._client, ref.handle)
+        board = self._board(ref)
 
         tb = board.get_title_block_info()
         title_block = {

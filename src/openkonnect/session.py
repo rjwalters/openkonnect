@@ -12,13 +12,16 @@ single connection). It provides:
   ``kicad_busy`` retries and maps client exceptions onto C-3 codes;
 * :meth:`Session.run_tool`, which runs a whole tool body on a worker thread
   under a hard wall-clock bound (C-4) and wraps the result in the common
-  envelope (``ok``, ``error``, ``meta``).
+  envelope (``ok``, ``error``, ``meta``);
+* :func:`board_dirty_state` and :func:`file_state`, the SES-01 dirty-state
+  tri-state and file fingerprints that the file-sync tools (#4) share.
 """
 
 from __future__ import annotations
 
 import contextlib
 import glob
+import hashlib
 import json
 import os
 import platform
@@ -32,7 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 from . import errors as E
-from .backend import IpcBackend, KipyBackend
+from .backend import BoardRef, IpcBackend, KipyBackend
 from .errors import ErrorCode, OpenKonnectError
 
 T = TypeVar("T")
@@ -513,3 +516,142 @@ class Session:
         if "error" in box:
             return {"ok": False, "error": box["error"].to_dict(), "meta": envelope_meta}
         return {"ok": True, **box["data"], "meta": envelope_meta}
+
+
+# -- dirty state and file fingerprints (SES-01 tri-state, #4) ----------------------
+
+#: ``dirty_basis`` values. ``kicad_flag`` is KiCad 11's "modified since last
+#: save" query, which kicad-python 0.8 / KiCad 10 do not offer, so this module
+#: never produces it.
+BASIS_KICAD_FLAG = "kicad_flag"
+BASIS_CONTENT = "content_comparison"
+BASIS_NONE = "none"
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def text_sha256(text: str) -> str:
+    return sha256_bytes(text.encode("utf-8"))
+
+
+def file_state(path: str) -> dict[str, Any]:
+    """What is on disk at ``path``: existence, SHA-256, size and mtime."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        st = os.stat(path)
+    except FileNotFoundError:
+        return {"exists": False, "sha256": None, "size": None, "mtime_ns": None}
+    return {
+        "exists": True,
+        "sha256": sha256_bytes(data),
+        "size": st.st_size,
+        "mtime_ns": st.st_mtime_ns,
+    }
+
+
+def read_bytes(path: str) -> bytes | None:
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+@dataclass
+class DirtyState:
+    """SES-01 dirty state for one document: ``True``, ``False`` or ``"unknown"``."""
+
+    dirty: bool | str
+    basis: str
+    note: str
+    #: SHA-256 of the editor's native-format text when it could be read.
+    editor_sha256: str | None = None
+
+    @property
+    def must_protect(self) -> bool:
+        """``unknown`` counts as dirty for every tool that protects unsaved work."""
+        return self.dirty is not False
+
+    def record(self) -> dict[str, Any]:
+        return {"dirty": self.dirty, "dirty_basis": self.basis, "dirty_note": self.note}
+
+
+def read_board_text(session: Session, ref: BoardRef) -> str | None:
+    """The editor's board as native-format text, or None if KiCad will not serve it.
+
+    Connection-class errors (busy, timeout, instance change, unreachable)
+    propagate; only "KiCad rejected / does not implement this request" is
+    turned into None.
+    """
+    try:
+        return session.call(lambda b: b.board_text(ref))
+    except OpenKonnectError as err:
+        if err.code in (ErrorCode.UNSUPPORTED_ON_THIS_KICAD, ErrorCode.INTERNAL):
+            return None
+        raise
+
+
+def board_dirty_state(
+    session: Session,
+    ref: BoardRef,
+    *,
+    editor_baseline_sha256: str | None = None,
+    text: str | None = None,
+) -> DirtyState:
+    """Decide dirty state for an open board from documented signals only.
+
+    KiCad 10 has no "modified since last save" query. The documented signal
+    used instead is the editor's own native-format text (``SaveDocumentToString``):
+
+    * With ``editor_baseline_sha256`` (the editor's text hash recorded at a moment
+      it was known to match its file, e.g. right after a save), the board is
+      clean if the editor text is unchanged since then, and dirty if it changed.
+    * Without a baseline, the board is clean only if the editor text is
+      byte-identical to the saved file. Any difference is ``unknown``: it may be
+      unsaved work, or only a formatting difference between KiCad's serializer
+      and whatever wrote the file.
+    * If the text cannot be read, the state is ``unknown`` with basis ``none``.
+
+    ``False`` is never guessed.
+    """
+    if text is None:
+        text = read_board_text(session, ref)
+    if text is None:
+        return DirtyState(
+            "unknown",
+            BASIS_NONE,
+            "KiCad did not serve the board as text, and KiCad 10 has no dirty-state query.",
+        )
+    h = text_sha256(text)
+    if editor_baseline_sha256 is not None:
+        if h == editor_baseline_sha256:
+            return DirtyState(
+                False,
+                BASIS_CONTENT,
+                "The editor content is unchanged since the recorded baseline (editor_sha256).",
+                h,
+            )
+        return DirtyState(
+            True,
+            BASIS_CONTENT,
+            "The editor content changed since the recorded baseline (editor_sha256): "
+            "someone edited the board in KiCad.",
+            h,
+        )
+    on_disk = read_bytes(ref.path)
+    if on_disk is None:
+        return DirtyState("unknown", BASIS_NONE, "The board has no file on disk.", h)
+    if on_disk == text.encode("utf-8"):
+        return DirtyState(
+            False, BASIS_CONTENT, "The editor content is byte-identical to the saved file.", h
+        )
+    return DirtyState(
+        "unknown",
+        BASIS_NONE,
+        "The editor content differs from the saved file. KiCad 10 cannot say whether that "
+        "is unsaved work or only formatting, so it counts as dirty.",
+        h,
+    )

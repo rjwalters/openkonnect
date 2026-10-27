@@ -1,0 +1,230 @@
+"""SES-06 ``run_kct_handoff`` against a fake IPC backend and a fake ``kct``."""
+
+from __future__ import annotations
+
+import json
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+from openkonnect.tools.run_kct_handoff import (
+    CommandResult,
+    default_runner,
+    run_kct_handoff,
+    validate_command,
+)
+
+from .conftest import make_session
+from .test_save_before_external_write import (
+    CODES,
+    EDITED_TEXT,
+    FILE_TEXT,
+    SyncFake,
+    board_on_disk,
+    connection_cases,
+)
+
+KCT_TEXT = '(kicad_pcb (version 20241229) (generator "kct") (routed yes))\n'
+ROUTE = ["route", "{board}", "-o", "{board}"]
+
+
+class FakeKct:
+    """Records the argv and does what it is told to the board file."""
+
+    def __init__(self, write=KCT_TEXT, rc=0, stdout="", timed_out=False, during=None):
+        self.write, self.rc, self.stdout, self.timed_out = write, rc, stdout, timed_out
+        self.during = during
+        self.calls: list[tuple[list[str], float, str | None]] = []
+
+    def __call__(self, argv, timeout_s, cwd):
+        self.calls.append((argv, timeout_s, cwd))
+        if self.write is not None:
+            Path(argv[2]).write_text(self.write)
+        if self.during:
+            self.during()
+        return CommandResult(None if self.timed_out else self.rc, self.stdout, "", self.timed_out)
+
+
+def handoff(session, kct=None, command=ROUTE, **kw):
+    return run_kct_handoff(session, command, runner=kct or FakeKct(), kct="/bin/kct", **kw)
+
+
+def names(r):
+    return [(s["step"], s["name"], s["outcome"]) for s in r["steps"]]
+
+
+# -- allow-list -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["rm", "-rf", "{board}"],
+        ["drc", "{board}"],
+        ["zones", "list", "{board}"],
+        "route {board} -o {board}",
+        [],
+        ["kct"],
+        ["route", "/some/other.kicad_pcb"],
+        ["route", "{board}", 3],
+    ],
+)
+def test_not_allow_listed_is_invalid_argument_and_touches_nothing(tmp_path, command):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    kct = FakeKct()
+    r = handoff(make_session(fake), kct, command=command, allow_save=True)
+    assert r["ok"] is False
+    assert r["error"]["code"] == "invalid_argument"
+    assert r["failed_step"] == "validate"
+    assert fake.calls == []
+    assert kct.calls == []
+
+
+def test_allow_list_accepts_leading_kct_and_subcommands():
+    assert validate_command(["kct", "route", "{board}"]) == ["route", "{board}"]
+    assert validate_command(["zones", "fill", "{board}"])[0] == "zones"
+    assert validate_command(["fix-vias", "--output={board}", "{board}"])
+
+
+# -- the protocol -----------------------------------------------------------------
+
+
+def test_clean_board_full_protocol(tmp_path):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    kct = FakeKct(stdout=json.dumps({"routed": 3}))
+    r = handoff(make_session(fake), kct)
+    assert r["ok"] is True, r
+    assert names(r) == [
+        (1, "session_status", "ok"),
+        (2, "save_before_external_write", "none"),
+        (3, "kct", "ok"),
+        (4, "check_command", "ok"),
+        (5, "check_file_changed", "changed"),
+        (6, "sync_from_disk", "reloaded"),
+        (7, "report", "ok"),
+    ]
+    argv, _, cwd = kct.calls[0]
+    assert argv == ["/bin/kct", "route", ref.path, "-o", ref.path]
+    assert cwd == str(tmp_path)
+    assert r["command"][0] == "kct"
+    assert r["exit_code"] == 0
+    assert r["output_json"] == {"routed": 3}
+    assert r["final_state"]["reloaded"] is True
+    assert fake.editor == KCT_TEXT
+    assert "Ctrl+Z" in r["undo_note"]
+
+
+def test_unknown_dirty_needs_allow_save_and_command_never_runs(tmp_path):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref, EDITED_TEXT)
+    kct = FakeKct()
+    r = handoff(make_session(fake), kct)
+    assert r["ok"] is False
+    assert r["failed_step"] == "save_before_external_write"
+    assert r["error"]["code"] == "dirty_state_unknown"
+    assert kct.calls == []
+
+
+def test_allow_save_then_reload_without_discard(tmp_path):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref, EDITED_TEXT)
+    r = handoff(make_session(fake), allow_save=True)
+    assert r["ok"] is True, r
+    assert r["steps"][1]["outcome"] == "saved"
+    assert r["steps"][5]["discarded_unsaved"] is False
+    assert fake.editor == KCT_TEXT
+
+
+def test_user_edit_during_command_refuses_at_step_6(tmp_path):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+
+    def user_edits():
+        fake.editor = EDITED_TEXT  # the fake flips to dirty while kct runs
+
+    r = handoff(make_session(fake), FakeKct(during=user_edits))
+    assert r["ok"] is False
+    assert r["failed_step"] == "sync_from_disk"
+    assert r["error"]["code"] == "document_dirty"
+    assert "command's output" in r["error"]["details"]["handoff_state"]
+    assert "revert_board" not in fake.calls
+    assert fake.editor == EDITED_TEXT
+    assert Path(ref.path).read_text() == KCT_TEXT
+
+
+def test_command_failure_stops_without_reload(tmp_path):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    r = handoff(make_session(fake), FakeKct(write=None, rc=2))
+    assert r["ok"] is False
+    assert r["failed_step"] == "kct"
+    assert r["error"]["code"] == "kicad_tools_failed"
+    assert r["error"]["details"] == {"exit_code": 2, "file_changed": False}
+    assert names(r)[-1] == (4, "check_command", "stopped")
+    assert "revert_board" not in fake.calls
+
+
+def test_timeout_stops_and_does_not_reload(tmp_path):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    r = handoff(make_session(fake), FakeKct(timed_out=True), timeout_s=1)
+    assert r["ok"] is False
+    assert r["error"]["code"] == "timeout"
+    assert r["error"]["details"]["file_changed"] is True
+    assert "partial" in r["error"]["message"]
+    assert r["steps"][2]["outcome"] == "timeout"
+    assert "revert_board" not in fake.calls
+    assert fake.editor == FILE_TEXT
+
+
+def test_unchanged_file_skips_reload(tmp_path):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    r = handoff(make_session(fake), FakeKct(write=None))
+    assert r["ok"] is True, r
+    assert (5, "check_file_changed", "skipped_reload") in names(r)
+    assert r["final_state"]["reloaded"] is False
+    assert "revert_board" not in fake.calls
+
+
+def test_schematic_is_unsupported(tmp_path):
+    fake = SyncFake(board_on_disk(tmp_path))
+    r = handoff(make_session(fake), documents="all")
+    assert r["error"]["code"] == "unsupported_on_this_kicad"
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize("timeout_s", [0, -1, 10_000])
+def test_bad_timeout(tmp_path, timeout_s):
+    r = handoff(make_session(SyncFake(board_on_disk(tmp_path))), timeout_s=timeout_s)
+    assert r["error"]["code"] == "invalid_argument"
+
+
+@pytest.mark.parametrize("code", CODES)
+def test_connection_errors_fail_fast(tmp_path, code):
+    ref = board_on_disk(tmp_path)
+    _, session_kw, script = next(c for c in connection_cases(ref) if c[0] == code)
+    kct = FakeKct()
+    r = handoff(make_session(SyncFake(ref, **script), **session_kw), kct, allow_save=True)
+    assert r["ok"] is False
+    assert r["failed_step"] == "session_status"
+    assert r["error"]["code"] == code
+    assert kct.calls == []
+
+
+def test_default_runner_kills_on_timeout():
+    started = time.monotonic()
+    res = default_runner([sys.executable, "-c", "import time; time.sleep(30)"], 0.5, None)
+    assert res.timed_out is True
+    assert res.returncode is None
+    assert time.monotonic() - started < 5
+
+
+def test_default_runner_captures_output():
+    res = default_runner([sys.executable, "-c", "print('{\"a\": 1}')"], 10, None)
+    assert res.returncode == 0
+    assert json.loads(res.stdout) == {"a": 1}
