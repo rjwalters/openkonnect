@@ -9,7 +9,10 @@ The seven steps of the handoff protocol (``docs/handoff-protocol.md``):
 4. if the command failed or timed out, stop without reloading;
 5. if the file did not change, skip the reload;
 6. otherwise ``sync_from_disk`` with both hashes, so an edit the user made
-   while the command ran is refused with ``document_dirty``;
+   while the command ran is refused with ``document_dirty``. Without
+   ``discard_unsaved`` an unchanged editor is still refused with
+   ``dirty_state_unknown``: once the file is replaced, no recorded hash can
+   prove the editor holds nothing the file lacks (issue #15);
 7. report.
 
 Each IPC step runs under the normal per-call bound (C-4). The command has its
@@ -45,7 +48,10 @@ DESCRIPTION = (
     "(allow_save=true is needed when dirty state is unknown, as on KiCad 10), run the "
     "command with a timeout, then reload the editor from the file only if the command "
     "succeeded and changed it. An edit made in KiCad while the command ran makes the "
-    "reload refuse with document_dirty. command is an argv list without 'kct', and must "
+    "reload refuse with document_dirty. On KiCad 10 the reload after a changed file needs "
+    "discard_unsaved=true, since openkonnect cannot prove the editor holds nothing the new "
+    "file lacks; without it the reload refuses with dirty_state_unknown and nothing is "
+    "lost. command is an argv list without 'kct', and must "
     "contain the token {board}, which is replaced by the board's path, e.g. "
     '["route", "{board}", "-o", "{board}"]. Board only on KiCad 10.'
 )
@@ -349,19 +355,27 @@ def run_kct_handoff(
             discard_unsaved=discard_unsaved,
             expected_hash=after["sha256"],
             editor_hash=saved["editor_sha256"],
-            editor_file_hash=saved["sha256"],
         )
     )
     if not r["ok"]:
         steps.append({"step": 6, "name": "sync_from_disk", "outcome": "refused"})
         err = r["error"]
-        if err["code"] in (ErrorCode.DOCUMENT_DIRTY.value, ErrorCode.DIRTY_STATE_UNKNOWN.value):
+        if err["code"] == ErrorCode.DOCUMENT_DIRTY.value:
             err["details"]["handoff_state"] = (
                 "The file on disk holds the command's output, and the editor holds its "
                 "previous state plus any edits made in KiCad meanwhile. Nothing was lost "
                 "yet: either save from KiCad (keeping your edits and dropping the "
                 "command's), or re-run sync_from_disk with discard_unsaved=true (keeping the "
                 "command's output and dropping the edits)."
+            )
+        elif err["code"] == ErrorCode.DIRTY_STATE_UNKNOWN.value:
+            err["details"]["handoff_state"] = (
+                "The file on disk holds the command's output. The editor's content is "
+                "unchanged since the save, but openkonnect cannot prove it holds nothing "
+                "the new file lacks (KiCad 10 has no dirty query). Nothing was lost yet: "
+                "if you made no edits in KiCad you need, re-run sync_from_disk with "
+                "discard_unsaved=true (keeping the command's output), or save from KiCad "
+                "(keeping the editor's state and dropping the command's)."
             )
         return fail("sync_from_disk", err)
     synced = r["documents"][0]

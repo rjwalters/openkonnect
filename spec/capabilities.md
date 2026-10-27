@@ -297,11 +297,11 @@ control, and grouping edits into transactions. Every entry here is live-editor.
   - `expected_hash`: optional, normally from SES-04.
 - **Behaviour:**
   - If the editor is dirty or `unknown` and `discard_unsaved` is not set,
-    refuse and change nothing. A caller-supplied `editor_hash` (the editor
-    content hash from SES-04) can only show the editor changed or leave the
-    state `unknown`; it proves the editor clean only when bound to the file by
-    `editor_file_hash` (SES-04's file `sha256`) matching a fresh read of the
-    file, or by a verified `expected_hash`.
+    refuse and change nothing. The editor is clean only when its content,
+    read during this call, is byte-identical to the file, also read during
+    this call. A caller-supplied hash (`editor_hash`, the editor content hash
+    from SES-04, or `expected_hash`) can only show the editor changed or leave
+    the state `unknown`; it never proves the editor clean.
   - Otherwise reload the document from disk, keeping the view (zoom, pan,
     layers) where KiCad allows.
   - Afterwards, check that the editor content matches the file.
@@ -335,7 +335,9 @@ control, and grouping edits into transactions. Every entry here is live-editor.
      changed.
   5. If the file did not change, skip the reload.
   6. Otherwise, run [SES-05](#ses-05-sync_from_disk) with the hash. Its dirty
-     check protects any edit the user made while the command ran.
+     check protects any edit the user made while the command ran. Without
+     `discard_unsaved` it also refuses an unchanged editor as `unknown`, since
+     the replaced file can no longer prove the editor clean.
   7. Report the result.
 - **Inputs:**
   - `command`: a `kct` subcommand and its arguments, from an allow-list of

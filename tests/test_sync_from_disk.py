@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+import itertools
 from pathlib import Path
 
 import pytest
@@ -29,6 +31,20 @@ def sync(session, **kw):
     return session.run_tool(lambda s: sync_from_disk(s, **kw))
 
 
+_SYNC_PARAMS = set(inspect.signature(sync_from_disk).parameters)
+
+
+def sync_any(session, **kw):
+    """``sync`` that drops keyword arguments this ``sync_from_disk`` does not take.
+
+    The regression tests for issue #15 pass hash arguments that some versions of
+    the tool accept and others do not (``editor_file_hash``). Dropping them keeps
+    every version callable, so a test fails on the bug's behaviour (a wrong
+    ``ok: True`` or ``dirty: False``), never on a signature error.
+    """
+    return sync(session, **{k: v for k, v in kw.items() if k in _SYNC_PARAMS})
+
+
 def after_external_write(tmp_path, editor=FILE_TEXT, **kw):
     """The editor holds ``editor``; an external tool has written KCT_TEXT to the file."""
     ref = board_on_disk(tmp_path, KCT_TEXT)
@@ -45,21 +61,33 @@ def test_unknown_without_discard_refuses_and_changes_nothing(tmp_path):
     assert fake.editor == FILE_TEXT
 
 
-def test_baseline_unchanged_reloads_without_discard(tmp_path):
+def test_baseline_unchanged_after_write_is_unknown_without_discard(tmp_path):
+    # The editor still matches its recorded hash, but it differs from the file now:
+    # no recorded hash can prove it holds nothing the file lacks. Issue #15.
+    ref, fake = after_external_write(tmp_path)
+    r = sync(make_session(fake), editor_hash=sha(FILE_TEXT), expected_hash=sha(KCT_TEXT))
+    assert r["ok"] is False, r
+    assert r["error"]["code"] == "dirty_state_unknown"
+    assert r["error"]["details"]["documents"][0]["state_before"]["dirty"] == "unknown"
+    assert "revert_board" not in fake.calls
+    assert fake.editor == FILE_TEXT
+
+
+def test_baseline_unchanged_reloads_with_discard(tmp_path):
     ref, fake = after_external_write(tmp_path)
     r = sync(
         make_session(fake),
         editor_hash=sha(FILE_TEXT),
-        editor_file_hash=sha(FILE_TEXT),
         expected_hash=sha(KCT_TEXT),
+        discard_unsaved=True,
     )
     assert r["ok"] is True, r
     (doc,) = r["documents"]
-    assert doc["state_before"]["dirty"] is False
+    assert doc["state_before"]["dirty"] == "unknown"
     assert doc["state_before"]["dirty_basis"] == "content_comparison"
     assert doc["action"] == "reloaded"
     assert doc["reloaded"] is True
-    assert doc["discarded_unsaved"] is False
+    assert doc["discarded_unsaved"] == "unknown"
     assert doc["view_kept"] == "unknown"
     assert doc["verified"] is True
     assert doc["editor_changed"] is True
@@ -105,7 +133,7 @@ def test_expected_hash_mismatch_refuses(tmp_path):
 def test_file_kicad_rejects_reports_previous_state(tmp_path):
     err = ApiError("could not parse board", code=ApiStatusCode.AS_BAD_REQUEST)
     ref, fake = after_external_write(tmp_path, revert_error=err)
-    r = sync(make_session(fake), editor_hash=sha(FILE_TEXT), editor_file_hash=sha(KCT_TEXT))
+    r = sync(make_session(fake), editor_hash=sha(FILE_TEXT), discard_unsaved=True)
     assert r["ok"] is False
     assert r["error"]["code"] == "reload_failed"
     assert r["error"]["details"]["editor_state"] == "previous"
@@ -123,8 +151,8 @@ def test_reformatted_file_is_unverified_not_failed(tmp_path):
     r = sync(
         make_session(fake),
         editor_hash=sha(FILE_TEXT),
-        editor_file_hash=sha(FILE_TEXT),
         expected_hash=sha(KCT_TEXT),
+        discard_unsaved=True,
     )
     assert r["ok"] is True, r
     assert r["documents"][0]["verified"] == "unverified"
@@ -163,7 +191,9 @@ def test_connection_errors_fail_fast(tmp_path, code):
     assert "revert_board" not in fake.calls
 
 
-# Issue #15: a recorded editor_hash alone must never prove the board clean.
+# Issue #15: no caller-supplied hash may ever prove the board clean. Every test
+# below goes through sync_any, so it runs against any version of the tool and
+# fails only on the behaviour.
 
 
 def save_then_undo(tmp_path):
@@ -174,10 +204,7 @@ def save_then_undo(tmp_path):
     return ref, SyncFake(ref, FILE_TEXT)
 
 
-@pytest.mark.parametrize("binding", [None, sha(FILE_TEXT)], ids=["unbound", "stale_bound"])
-def test_save_then_undo_is_unknown_and_not_reloaded(tmp_path, binding):
-    ref, fake = save_then_undo(tmp_path)
-    r = sync(make_session(fake), editor_hash=sha(FILE_TEXT), editor_file_hash=binding)
+def assert_refused_unknown(r, fake):
     assert r["ok"] is False, r
     assert r["error"]["code"] == "dirty_state_unknown"
     assert r["error"]["details"]["documents"][0]["state_before"]["dirty"] == "unknown"
@@ -185,16 +212,44 @@ def test_save_then_undo_is_unknown_and_not_reloaded(tmp_path, binding):
     assert fake.editor == FILE_TEXT
 
 
-@pytest.mark.parametrize("binding", [None, sha(FILE_TEXT)], ids=["unbound", "stale_bound"])
-def test_save_then_undo_with_discard_reports_unknown(tmp_path, binding):
+@pytest.mark.parametrize("file_hash", ["garbage", sha(FILE_TEXT)], ids=["junk", "stale"])
+def test_judge_probe_fresh_expected_hash_cannot_prove_clean(tmp_path, file_hash):
+    # The Judge's probe on PR #22: the old editor_hash, a junk (or the real, stale)
+    # editor_file_hash, and an expected_hash read fresh from the file.
     ref, fake = save_then_undo(tmp_path)
-    r = sync(
+    r = sync_any(
         make_session(fake),
         editor_hash=sha(FILE_TEXT),
-        editor_file_hash=binding,
+        editor_file_hash=file_hash,
+        expected_hash=sha(EDITED_TEXT),
+    )
+    assert_refused_unknown(r, fake)
+
+
+def test_save_then_undo_editor_hash_alone_is_unknown(tmp_path):
+    ref, fake = save_then_undo(tmp_path)
+    r = sync(make_session(fake), editor_hash=sha(FILE_TEXT))
+    assert_refused_unknown(r, fake)
+
+
+@pytest.mark.parametrize("file_hash", [None, sha(FILE_TEXT)], ids=["unbound", "stale_bound"])
+def test_save_then_undo_is_unknown_and_not_reloaded(tmp_path, file_hash):
+    ref, fake = save_then_undo(tmp_path)
+    r = sync_any(make_session(fake), editor_hash=sha(FILE_TEXT), editor_file_hash=file_hash)
+    assert_refused_unknown(r, fake)
+
+
+@pytest.mark.parametrize("file_hash", [None, sha(FILE_TEXT)], ids=["unbound", "stale_bound"])
+def test_save_then_undo_with_discard_reports_unknown(tmp_path, file_hash):
+    ref, fake = save_then_undo(tmp_path)
+    r = sync_any(
+        make_session(fake),
+        editor_hash=sha(FILE_TEXT),
+        editor_file_hash=file_hash,
         discard_unsaved=True,
     )
     assert r["ok"] is True, r
+    assert r["documents"][0]["state_before"]["dirty"] == "unknown"
     assert r["documents"][0]["discarded_unsaved"] == "unknown"
     assert fake.editor == EDITED_TEXT
 
@@ -202,22 +257,58 @@ def test_save_then_undo_with_discard_reports_unknown(tmp_path, binding):
 def test_editor_hash_alone_after_external_write_is_unknown(tmp_path):
     ref, fake = after_external_write(tmp_path)
     r = sync(make_session(fake), editor_hash=sha(FILE_TEXT), expected_hash=sha(KCT_TEXT))
-    assert r["error"]["code"] == "dirty_state_unknown"
-    assert "revert_board" not in fake.calls
+    assert_refused_unknown(r, fake)
 
 
 def test_binding_without_expected_hash_after_write_is_unknown(tmp_path):
-    # The file changed since the baseline, and the caller does not vouch for the new
-    # content with expected_hash: the change may be a save from KiCad.
     ref, fake = after_external_write(tmp_path)
-    r = sync(make_session(fake), editor_hash=sha(FILE_TEXT), editor_file_hash=sha(FILE_TEXT))
-    assert r["error"]["code"] == "dirty_state_unknown"
-    assert "revert_board" not in fake.calls
+    r = sync_any(make_session(fake), editor_hash=sha(FILE_TEXT), editor_file_hash=sha(FILE_TEXT))
+    assert_refused_unknown(r, fake)
 
 
-# board_dirty_state over baseline x binding: False only for match + bound + fresh.
+# Property: over every combination of caller-supplied hash values, dirty is never
+# False (and nothing is reloaded without discard_unsaved) unless the editor's
+# content, read now, equals the file's content, read now.
 
-F_BASE, F_KCT, F_OTHER = sha(FILE_TEXT), sha(KCT_TEXT), sha("something else")
+STATES = {
+    "clean": (FILE_TEXT, FILE_TEXT),  # (editor, file)
+    "after_write": (FILE_TEXT, KCT_TEXT),
+    "save_then_undo": (FILE_TEXT, EDITED_TEXT),
+    "edited": (EDITED_TEXT, FILE_TEXT),
+}
+HASH_VALUES = [None, "garbage", sha(FILE_TEXT), sha(KCT_TEXT), sha(EDITED_TEXT)]
+HASH_ARGS = ("editor_hash", "editor_file_hash", "expected_hash")
+
+
+@pytest.mark.parametrize("state", list(STATES))
+def test_no_caller_hash_combination_proves_clean(tmp_path, state):
+    editor, on_disk = STATES[state]
+    fresh_equal = editor == on_disk
+    seen_false = False
+    for values in itertools.product(HASH_VALUES, repeat=len(HASH_ARGS)):
+        kw = {k: v for k, v in zip(HASH_ARGS, values, strict=True) if v is not None}
+        ref = board_on_disk(tmp_path, on_disk)
+        fake = SyncFake(ref, editor)
+        r = sync_any(make_session(fake), **kw)
+        if r["ok"]:
+            st = r["documents"][0]["state_before"]
+        elif r["error"]["code"] in ("dirty_state_unknown", "document_dirty"):
+            st = r["error"]["details"]["documents"][0]["state_before"]
+        else:
+            assert r["error"]["code"] == "stale_input", (kw, r)
+            st = None
+        if st is not None and st["dirty"] is False:
+            seen_false = True
+            assert fresh_equal, (state, kw, st)
+        if "revert_board" in fake.calls:
+            assert fresh_equal, (state, kw, "reloaded without discard_unsaved")
+    # The clean state must still be provable from the fresh read alone.
+    assert seen_false == fresh_equal
+
+
+# board_dirty_state over editor x file x baseline: False only for fresh equality.
+
+BASELINES = [None, "garbage", sha(FILE_TEXT), sha(KCT_TEXT), sha(EDITED_TEXT)]
 
 
 def dirty_state(fake, ref, **kw):
@@ -230,41 +321,22 @@ def dirty_state(fake, ref, **kw):
     return r["ds"]
 
 
-@pytest.mark.parametrize(
-    ("baseline", "bound", "written", "want"),
-    [
-        (sha(FILE_TEXT), None, None, "unknown"),  # match, unbound
-        (sha(FILE_TEXT), None, F_KCT, "unknown"),  # match, written hash alone binds nothing
-        (sha(FILE_TEXT), F_KCT, None, False),  # match, bound and fresh
-        (sha(FILE_TEXT), F_BASE, F_KCT, False),  # match, bound, caller's write is fresh
-        (sha(FILE_TEXT), F_BASE, None, "unknown"),  # match, stale binding
-        (sha(FILE_TEXT), F_BASE, F_OTHER, "unknown"),  # match, stale binding and write
-        (sha(EDITED_TEXT), None, None, True),  # mismatch, unbound
-        (sha(EDITED_TEXT), F_KCT, None, True),  # mismatch, bound and fresh
-        (sha(EDITED_TEXT), F_BASE, None, True),  # mismatch, stale binding
-    ],
-)
-def test_board_dirty_state_baseline_binding_matrix(tmp_path, baseline, bound, written, want):
-    ref, fake = after_external_write(tmp_path)  # editor FILE_TEXT, file KCT_TEXT
-    ds = dirty_state(
-        fake,
-        ref,
-        editor_baseline_sha256=baseline,
-        baseline_file_sha256=bound,
-        written_file_sha256=written,
-    )
-    assert ds.dirty is want if isinstance(want, bool) else ds.dirty == want
-    assert ds.basis == "content_comparison"
+@pytest.mark.parametrize("state", list(STATES))
+@pytest.mark.parametrize("baseline", BASELINES)
+def test_board_dirty_state_false_only_for_fresh_equality(tmp_path, state, baseline):
+    editor, on_disk = STATES[state]
+    ref = board_on_disk(tmp_path, on_disk)
+    ds = dirty_state(SyncFake(ref, editor), ref, editor_baseline_sha256=baseline)
+    if editor == on_disk:
+        assert ds.dirty is False
+    elif baseline is not None and baseline != sha(editor):
+        assert ds.dirty is True
+    else:
+        assert ds.dirty == "unknown"
 
 
-def test_board_dirty_state_bound_but_file_missing_is_never_clean(tmp_path):
+def test_board_dirty_state_file_missing_is_never_clean(tmp_path):
     ref, fake = after_external_write(tmp_path)
     Path(ref.path).unlink()
-    ds = dirty_state(
-        fake,
-        ref,
-        editor_baseline_sha256=sha(FILE_TEXT),
-        baseline_file_sha256=F_KCT,
-        written_file_sha256=F_KCT,
-    )
+    ds = dirty_state(fake, ref, editor_baseline_sha256=sha(FILE_TEXT))
     assert ds.dirty == "unknown"

@@ -599,35 +599,32 @@ def board_dirty_state(
     ref: BoardRef,
     *,
     editor_baseline_sha256: str | None = None,
-    baseline_file_sha256: str | None = None,
-    written_file_sha256: str | None = None,
-    text: str | None = None,
 ) -> DirtyState:
     """Decide dirty state for an open board from documented signals only.
 
     KiCad 10 has no "modified since last save" query. The documented signal
-    used instead is the editor's own native-format text (``SaveDocumentToString``):
+    used instead is the editor's own native-format text (``SaveDocumentToString``),
+    read fresh by this call, compared with the file on disk, also read fresh by
+    this call:
 
-    * With ``editor_baseline_sha256`` (the editor's text hash recorded at a moment
-      it was known to match its file, e.g. right after a save), an editor text that
-      changed since then is dirty (``True``). An unchanged editor text is clean
-      (``False``) only when the baseline is bound to the file: the caller gives
-      ``baseline_file_sha256`` (the file hash recorded with the baseline) and a
-      fresh read of the file now has that hash, or ``written_file_sha256`` (the
-      hash of the file the caller's own tool wrote since the baseline, already
-      checked against the file). Otherwise it is ``unknown``: the file may have
-      been saved from KiCad since the baseline (for example save, edit, undo),
-      so the editor may hold state the file does not.
-    * Without a baseline, the board is clean only if the editor text is
-      byte-identical to the saved file. Any difference is ``unknown``: it may be
-      unsaved work, or only a formatting difference between KiCad's serializer
-      and whatever wrote the file.
+    * The board is clean (``False``) only when the fresh editor text is
+      byte-identical to the fresh file: then nothing in the editor is missing
+      from the file. This is the only way to reach ``False``.
+    * Otherwise, with ``editor_baseline_sha256`` (a caller-supplied hash of the
+      editor text, e.g. ``editor_sha256`` from a save), an editor text that
+      differs from it is dirty (``True``): someone edited the board in KiCad
+      since. An editor text equal to it is ``unknown``: a caller-supplied hash
+      cannot show the editor holds nothing the file lacks (for example after a
+      save from KiCad followed by an edit and an undo). Issue #15.
+    * Without a baseline, any difference is ``unknown``: it may be unsaved work,
+      or only a formatting difference between KiCad's serializer and whatever
+      wrote the file.
     * If the text cannot be read, the state is ``unknown`` with basis ``none``.
 
-    ``False`` is never guessed, and never follows from a caller-supplied hash alone.
+    A caller-supplied hash can only move the result toward ``True`` or
+    ``unknown``, never to ``False``. ``False`` is never guessed.
     """
-    if text is None:
-        text = read_board_text(session, ref)
+    text = read_board_text(session, ref)
     if text is None:
         return DirtyState(
             "unknown",
@@ -635,28 +632,12 @@ def board_dirty_state(
             "KiCad did not serve the board as text, and KiCad 10 has no dirty-state query.",
         )
     h = text_sha256(text)
-    if editor_baseline_sha256 is not None:
-        if h == editor_baseline_sha256:
-            now = file_state(ref.path)["sha256"]
-            bound = baseline_file_sha256 is not None and now is not None
-            if bound and now in (baseline_file_sha256, written_file_sha256):
-                return DirtyState(
-                    False,
-                    BASIS_CONTENT,
-                    "The editor content is unchanged since the recorded baseline "
-                    "(editor_sha256), and the file is the one recorded with it or the one "
-                    "the caller's tool wrote since.",
-                    h,
-                )
-            return DirtyState(
-                "unknown",
-                BASIS_CONTENT,
-                "The editor content equals the recorded baseline (editor_sha256), but the "
-                "baseline is not bound to the file on disk (no matching file hash recorded "
-                "with it), so the file may have been saved from KiCad since. It counts as "
-                "dirty.",
-                h,
-            )
+    on_disk = read_bytes(ref.path)
+    if on_disk is not None and on_disk == text.encode("utf-8"):
+        return DirtyState(
+            False, BASIS_CONTENT, "The editor content is byte-identical to the saved file.", h
+        )
+    if editor_baseline_sha256 is not None and h != editor_baseline_sha256:
         return DirtyState(
             True,
             BASIS_CONTENT,
@@ -664,12 +645,17 @@ def board_dirty_state(
             "someone edited the board in KiCad.",
             h,
         )
-    on_disk = read_bytes(ref.path)
     if on_disk is None:
         return DirtyState("unknown", BASIS_NONE, "The board has no file on disk.", h)
-    if on_disk == text.encode("utf-8"):
+    if editor_baseline_sha256 is not None:
         return DirtyState(
-            False, BASIS_CONTENT, "The editor content is byte-identical to the saved file.", h
+            "unknown",
+            BASIS_CONTENT,
+            "The editor content equals the recorded baseline (editor_sha256) but differs "
+            "from the file on disk. A recorded hash cannot prove the editor holds nothing "
+            "the file lacks (the file may have been saved from KiCad since, then the edit "
+            "undone), so it counts as dirty.",
+            h,
         )
     return DirtyState(
         "unknown",

@@ -163,10 +163,11 @@ def test_clean_only_by_byte_identity_with_the_file(tmp_path, editor, on_disk):
         assert (st["dirty"] is False) == (editor == on_disk)
 
 
-def test_next_names_editor_file_hash(tmp_path):
+def test_next_does_not_offer_a_hash_as_a_clean_proof(tmp_path):
     ref = board_on_disk(tmp_path)
     r = save(make_session(SyncFake(ref)))
-    assert "editor_file_hash" in r["next"]
+    assert "editor_file_hash" not in r["next"]
+    assert "cannot prove the board clean" in r["next"]
 
 
 def test_text_not_served_is_unknown_with_basis_none(tmp_path):

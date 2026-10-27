@@ -26,13 +26,14 @@ from .save_before_external_write import open_boards_or_fail, parse_documents
 DESCRIPTION = (
     "After a file-based tool (kct) wrote a board that is open in KiCad, reload the editor "
     "from the file. Refuses, changing nothing, if the editor may hold unsaved work: dirty "
-    "or unknown (KiCad 10 has no dirty query) unless discard_unsaved=true. To let "
-    "openkonnect prove the editor is unchanged since save_before_external_write, pass "
-    "editor_hash (its editor_sha256) together with editor_file_hash (its sha256, the file "
-    "hash at that save) and expected_hash (the file hash after your tool wrote it; an "
-    "unexpected write is refused). editor_hash without editor_file_hash proves nothing "
-    "clean: the state is unknown. The reload is not an undo step. The schematic cannot be reloaded "
-    "over KiCad 10's API: it is reported as manual_reload_required."
+    "or unknown (KiCad 10 has no dirty query) unless discard_unsaved=true. The board counts "
+    "as clean only when openkonnect reads the editor's content now and it is byte-identical "
+    "to the file now; no hash you pass can prove it clean. editor_hash (editor_sha256 from "
+    "save_before_external_write) lets openkonnect detect an edit made in KiCad since "
+    "(document_dirty); unchanged, it stays unknown. expected_hash (the file hash after your "
+    "tool wrote it) refuses an unexpected write with stale_input. The reload is not an undo "
+    "step. The schematic cannot be reloaded over KiCad 10's API: it is reported as "
+    "manual_reload_required."
 )
 
 UNDO_NOTE = (
@@ -62,7 +63,6 @@ def sync_from_disk(
     discard_unsaved: bool = False,
     expected_hash: str | None = None,
     editor_hash: str | None = None,
-    editor_file_hash: str | None = None,
 ) -> dict[str, Any]:
     want_board, want_sch = parse_documents(documents)
     boards = open_boards_or_fail(session, "board" if want_board else "schematic")
@@ -106,16 +106,10 @@ def sync_from_disk(
                         "actual_hash": fs["sha256"],
                     },
                 )
-            # editor_hash is a clean proof only when bound to the file: the file is
-            # still the one recorded with it (editor_file_hash), or the one the
-            # caller's tool wrote (expected_hash, checked just above). Issue #15.
-            ds = board_dirty_state(
-                session,
-                ref,
-                editor_baseline_sha256=editor_hash,
-                baseline_file_sha256=editor_file_hash,
-                written_file_sha256=expected_hash,
-            )
+            # Clean needs the editor, read now, to equal the file, read now. The
+            # caller's editor_hash can only show an edit (True), never prove clean.
+            # Issue #15.
+            ds = board_dirty_state(session, ref, editor_baseline_sha256=editor_hash)
             plans.append((ref, fs, ds))
 
     protected = [ds for _, _, ds in plans if ds.must_protect]

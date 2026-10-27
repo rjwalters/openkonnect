@@ -96,7 +96,7 @@ def test_clean_board_full_protocol(tmp_path):
     ref = board_on_disk(tmp_path)
     fake = SyncFake(ref)
     kct = FakeKct(stdout=json.dumps({"routed": 3}))
-    r = handoff(make_session(fake), kct)
+    r = handoff(make_session(fake), kct, discard_unsaved=True)
     assert r["ok"] is True, r
     assert names(r) == [
         (1, "session_status", "ok"),
@@ -118,6 +118,42 @@ def test_clean_board_full_protocol(tmp_path):
     assert "Ctrl+Z" in r["undo_note"]
 
 
+def test_changed_file_without_discard_refuses_unknown_at_step_6(tmp_path):
+    # Once kct replaced the file, the editor (unchanged since the save) differs from
+    # it, and no recorded hash can prove it holds nothing the file lacks. Issue #15.
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    r = handoff(make_session(fake))
+    assert r["ok"] is False, r
+    assert r["failed_step"] == "sync_from_disk"
+    assert r["error"]["code"] == "dirty_state_unknown"
+    assert "discard_unsaved=true" in r["error"]["details"]["handoff_state"]
+    assert "revert_board" not in fake.calls
+    assert fake.editor == FILE_TEXT
+    assert Path(ref.path).read_text() == KCT_TEXT
+
+
+def test_human_save_then_undo_during_command_is_not_reverted(tmp_path):
+    # The Judge's handoff case on PR #22: after kct wrote, the human saves an edit
+    # from KiCad (the file now holds it) and undoes it (the editor is back to the
+    # state recorded at step 2). The file hash the handoff reads after the run is
+    # the human's save, so expected_hash matches it.
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+
+    def human_saves_then_undoes():
+        Path(ref.path).write_text(EDITED_TEXT)  # save from KiCad; the editor then undoes
+
+    r = handoff(make_session(fake), FakeKct(during=human_saves_then_undoes))
+    assert r["ok"] is False, r
+    assert r["failed_step"] == "sync_from_disk"
+    assert r["error"]["code"] == "dirty_state_unknown"
+    assert r["error"]["details"]["documents"][0]["state_before"]["dirty"] == "unknown"
+    assert "revert_board" not in fake.calls
+    assert fake.editor == FILE_TEXT
+    assert Path(ref.path).read_text() == EDITED_TEXT
+
+
 def test_unknown_dirty_needs_allow_save_and_command_never_runs(tmp_path):
     ref = board_on_disk(tmp_path)
     fake = SyncFake(ref, EDITED_TEXT)
@@ -129,13 +165,13 @@ def test_unknown_dirty_needs_allow_save_and_command_never_runs(tmp_path):
     assert kct.calls == []
 
 
-def test_allow_save_then_reload_without_discard(tmp_path):
+def test_allow_save_then_reload_with_discard(tmp_path):
     ref = board_on_disk(tmp_path)
     fake = SyncFake(ref, EDITED_TEXT)
-    r = handoff(make_session(fake), allow_save=True)
+    r = handoff(make_session(fake), allow_save=True, discard_unsaved=True)
     assert r["ok"] is True, r
     assert r["steps"][1]["outcome"] == "saved"
-    assert r["steps"][5]["discarded_unsaved"] is False
+    assert r["steps"][5]["discarded_unsaved"] == "unknown"
     assert fake.editor == KCT_TEXT
 
 
@@ -156,7 +192,7 @@ def test_user_edit_during_command_refuses_at_step_6(tmp_path):
     assert Path(ref.path).read_text() == KCT_TEXT
 
 
-def test_handoff_binds_editor_hash_to_the_saved_file(tmp_path, monkeypatch):
+def test_handoff_passes_no_hash_that_could_prove_clean(tmp_path, monkeypatch):
     from openkonnect.tools import run_kct_handoff as handoff_mod
 
     seen = {}
@@ -168,11 +204,12 @@ def test_handoff_binds_editor_hash_to_the_saved_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(handoff_mod, "sync_from_disk", spy)
     ref = board_on_disk(tmp_path)
-    r = handoff(make_session(SyncFake(ref)))
+    r = handoff(make_session(SyncFake(ref)), discard_unsaved=True)
     assert r["ok"] is True, r
-    assert seen["editor_file_hash"] == r["steps"][1]["sha256"]
+    assert set(seen) == {"discard_unsaved", "expected_hash", "editor_hash"}
+    assert seen["editor_hash"] == r["steps"][1]["editor_sha256"]
     assert seen["expected_hash"] == r["steps"][2]["sha256_after"]
-    assert r["steps"][5]["discarded_unsaved"] is False
+    assert r["steps"][5]["discarded_unsaved"] == "unknown"
 
 
 def raising(exc):
