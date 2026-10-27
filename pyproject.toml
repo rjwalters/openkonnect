@@ -1,0 +1,52 @@
+[project]
+name = "openkonnect"
+version = "0.1.0"
+description = "MIT-licensed MCP server that drives a running KiCad 10 editor over its IPC API"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "RJ Walters" }]
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+dependencies = [
+    # KiCad's official IPC API bindings (MIT). See docs/ipc-client.md.
+    "kicad-python>=0.8,<0.9",
+    # File-level layer. Loose range only; the pin and the kicad-tools-main CI
+    # job belong to #6.
+    "kicad-tools>=0.24",
+    "mcp>=1.2,<2",
+]
+
+[project.scripts]
+openkonnect = "openkonnect.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openkonnect"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live_kicad: needs a running KiCad 10 with its API server on and the fixture board open; skipped when KiCad is not reachable",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+include = ["src/**/*.py", "tests/**/*.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]

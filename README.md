@@ -4,9 +4,87 @@ An MIT-licensed MCP server that lets an LLM agent drive a **running KiCad 10**:
 schematic, layout, placement, routing, design review and manufacturing tools,
 through KiCad's IPC API.
 
-> **Status: not yet started.** This repository holds the project charter and the
-> clean-room rules. No implementation has landed. See [ROADMAP.md](ROADMAP.md)
-> for the plan.
+> **Status: Phase 0 bootstrap.** The MCP server runs and exposes two read-only
+> tools, `session_status` and `board_summary`. See [ROADMAP.md](ROADMAP.md) for
+> the plan and [spec/capabilities.md](spec/capabilities.md) for what each tool
+> does.
+
+## Quickstart
+
+**1. Install.** You need [uv](https://docs.astral.sh/uv/) and Python 3.10 or
+newer.
+
+```bash
+git clone https://github.com/rjwalters/openkonnect
+cd openkonnect
+uv sync
+uv run openkonnect --version
+```
+
+**2. Turn on KiCad's API server.** In KiCad 10, open *Preferences > Plugins*,
+check **Enable KiCad API**, and restart KiCad. The API is off by default.
+Then open your board in the PCB editor. Check the connection with:
+
+```bash
+uv run openkonnect status
+```
+
+It prints `session_status` as JSON. `"ipc_reachable": true` means the server
+can reach KiCad. Otherwise `reason` says what is wrong, for example
+`kicad_not_running` or `ipc_disabled`.
+
+**3. Register the server with your MCP client.** The server speaks MCP over
+stdio. For Claude Code, run:
+
+```bash
+claude mcp add openkonnect -- uv run --directory /path/to/openkonnect openkonnect serve
+```
+
+For clients configured with JSON (Claude Desktop, Cursor and similar):
+
+```json
+{
+  "mcpServers": {
+    "openkonnect": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/openkonnect", "openkonnect", "serve"],
+      "env": { "OPENKONNECT_TIMEOUT": "5" }
+    }
+  }
+}
+```
+
+### Tools
+
+| Tool | Spec | What it returns |
+|------|------|-----------------|
+| `session_status` | SES-01 | Whether KiCad is running and its API reachable, versions, instance, project directory, open documents with dirty state, capability flags. "Not running" and "API disabled" come back as data, not errors. |
+| `board_summary` | LAY-01 | Live overview of the open board: path, title block, layer counts, counts of footprints, nets, tracks, vias and zones, outline size, dirty state. |
+
+On KiCad 10, `dirty` is always `"unknown"` with `dirty_basis: "none"`: KiCad
+10's API cannot report unsaved changes. Treat `unknown` as dirty.
+
+Every failure is a structured error (`code`, `message`, `retryable`,
+`details`), and every result carries `meta` with the time bound used and the
+number of busy retries.
+
+| Setting | Flag | Environment | Default |
+|---------|------|-------------|---------|
+| Bound on one tool call (s) | `--timeout` | `OPENKONNECT_TIMEOUT` | 5 |
+| Bound on one IPC request (s) | `--request-timeout` | `OPENKONNECT_REQUEST_TIMEOUT` | 2 |
+| Retries when KiCad is busy | `--busy-retries` | `OPENKONNECT_BUSY_RETRIES` | 3 |
+| API socket | `--socket` | `OPENKONNECT_SOCKET` | discovered |
+
+### Development
+
+```bash
+uv run ruff check . && uv run ruff format --check .
+uv run pytest -rs
+```
+
+Unit tests run against a fake IPC backend. Tests marked `live_kicad` need a
+running KiCad 10 with the API on and `tests/fixtures/board.kicad_pcb` open,
+and skip otherwise (always in CI): `uv run pytest -m live_kicad -rs`.
 
 ## Why this exists
 
@@ -26,7 +104,9 @@ Konnect-EDA or Orchis.ai LLC.** It contains none of their code. See
   (MIT). File-level work (parsing, checks, netlists, exports) comes from
   kicad-tools. openkonnect adds what needs a live editor: the IPC session,
   selection and view state, and interactive edits in an open board or schematic.
-- **KiCad 10 IPC API** for the live editor. No `pcbnew` SWIG bindings.
+- **KiCad 10 IPC API** for the live editor, through KiCad's official
+  `kicad-python` bindings (MIT; see [docs/ipc-client.md](docs/ipc-client.md)).
+  No `pcbnew` SWIG bindings.
 - **MCP** as the agent interface, usable from any MCP client.
 
 ## License
