@@ -46,7 +46,7 @@ def board_summary(session: Session) -> dict[str, Any]:
             "height_mm": _mm(box["y1_nm"] - box["y0_nm"]),
             "frame": "file",
             "origin_mm": {"x": _mm(box["x0_nm"]), "y": _mm(box["y0_nm"])},
-            "basis": "bounding box of Edge.Cuts shapes",
+            "basis": "bounding box of Edge.Cuts shape geometry, excluding stroke width",
         }
 
     doc = board_document(ref)

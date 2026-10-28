@@ -54,8 +54,8 @@ def frame_offset(outline_nm: dict[str, int] | None) -> dict[str, Any]:
     """The ``board`` frame's origin in the ``file`` frame (C-1).
 
     ``board`` coordinates are ``file`` coordinates minus this offset. The
-    origin is the top-left corner of the Edge.Cuts bounding box, the same
-    basis ``board_summary`` uses for the outline.
+    origin is the top-left corner of the Edge.Cuts shapes' geometry, without
+    their stroke width, the same basis ``board_summary`` uses for the outline.
     """
     if outline_nm is None:
         return {
@@ -66,7 +66,7 @@ def frame_offset(outline_nm: dict[str, int] | None) -> dict[str, Any]:
         "present": True,
         "x_mm": mm(outline_nm["x0_nm"]),
         "y_mm": mm(outline_nm["y0_nm"]),
-        "basis": "top-left of the Edge.Cuts bounding box",
+        "basis": "top-left of the Edge.Cuts geometry bounding box, excluding stroke width",
         "board_from_file": "board = file - offset",
     }
 
