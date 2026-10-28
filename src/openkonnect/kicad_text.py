@@ -17,11 +17,15 @@ removed, and nothing else:
   whitespace inside it counts. A bare atom is kept verbatim, so ``1`` and
   ``1.0`` differ, and so do ``"x"`` and ``x``. Whitespace between tokens is
   dropped.
-* A list of the exact form ``(version T)``, ``(generator T)`` or
-  ``(generator_version T)``, with one non-list token ``T``, is dropped when it
-  is a direct child of a list whose head is the bare atom ``footprint``. The
-  same list anywhere else (the board header, a nested list inside a
-  footprint) is kept.
+* In the editor text only, a list of the exact form ``(version T)``,
+  ``(generator T)`` or ``(generator_version T)``, with one non-list token
+  ``T``, is dropped when it is a direct child of a list whose head is the bare
+  atom ``footprint``. The same list anywhere else (the board header, a nested
+  list inside a footprint) is kept. The file is tokenized strictly: what was
+  measured is that the editor text adds these lists and KiCad's saved file has
+  none, so a header list inside a footprint in the file stays a difference.
+* Both sides must be exactly one top-level ``(kicad_pcb …)`` list, so empty or
+  whitespace-only text never matches.
 * Any other difference, or text that does not tokenize (an unterminated
   string, unbalanced parentheses, two tokens run together), means "not the
   same document". This function never raises into a match.
@@ -136,14 +140,32 @@ def canonical_tokens(text: str) -> list[str]:
     return out
 
 
+def _single_board_list(toks: list[str]) -> bool:
+    """Whether ``toks`` (balanced) is exactly one list headed by the atom ``kicad_pcb``."""
+    if len(toks) < 3 or toks[0] != "(" or toks[1] != "kicad_pcb" or toks[-1] != ")":
+        return False
+    depth = 0
+    for i, tok in enumerate(toks):
+        if tok == "(":
+            depth += 1
+        elif tok == ")":
+            depth -= 1
+            if depth == 0 and i != len(toks) - 1:
+                return False  # a second top-level item follows the first list
+    return True
+
+
 def same_document(editor_text: str, file_bytes: bytes) -> bool:
     """Whether the editor text and the file hold the same board, by the strict rule.
 
-    ``True`` only if both decode and tokenize and their canonical token
-    sequences are equal. Undecodable bytes or malformed text give ``False``.
+    ``True`` only if both decode and tokenize, the file is exactly one
+    ``(kicad_pcb …)`` list, and the editor's canonical tokens
+    (:func:`canonical_tokens`) equal the file's plain tokens (:func:`tokens`).
+    The per-footprint header rule applies to the editor text only. Undecodable
+    bytes or malformed text give ``False``.
     """
     try:
-        file_text = file_bytes.decode("utf-8")
-        return canonical_tokens(editor_text) == canonical_tokens(file_text)
+        file_toks = tokens(file_bytes.decode("utf-8"))
+        return _single_board_list(file_toks) and canonical_tokens(editor_text) == file_toks
     except (UnicodeDecodeError, TokenizeError):
         return False

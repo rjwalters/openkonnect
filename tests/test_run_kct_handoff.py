@@ -482,3 +482,29 @@ def test_unlisted_version_has_no_snapshot_and_refuses_unknown(tmp_path):
     assert r["failed_step"] == "sync_from_disk"
     assert r["error"]["code"] == "dirty_state_unknown"
     assert "revert_board" not in fake.calls
+
+
+def test_file_written_during_step_2_check_takes_no_snapshot(tmp_path, monkeypatch):
+    # The file changes between step 2's file read and its editor comparison, so
+    # the clean state is not bound to the reported sha256: step 2 refuses and
+    # nothing runs (Judge on PR #48, item 2).
+    from openkonnect.tools import save_before_external_write as save_mod
+
+    from .test_save_before_external_write import (
+        KICAD_EDITOR,
+        KicadSaveFake,
+        file_written_after_first_read,
+        kicad_save_form,
+    )
+
+    ref = board_on_disk(tmp_path, kicad_save_form(KICAD_EDITOR))
+    fake = KicadSaveFake(ref, KICAD_EDITOR)
+    file_written_after_first_read(monkeypatch, save_mod, kicad_save_form(KICAD_EDITOR) + "\n")
+    kct = FakeKct()
+    r = handoff(make_session(fake), kct)
+    assert r["ok"] is False, r
+    assert r["failed_step"] == "save_before_external_write"
+    assert r["error"]["code"] == "dirty_state_unknown"
+    assert "save_board" not in fake.calls
+    assert "revert_board" not in fake.calls
+    assert kct.calls == []

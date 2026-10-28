@@ -15,6 +15,7 @@ from ..errors import ErrorCode, OpenKonnectError
 from ..session import (
     DirtyState,
     Session,
+    bind_to_file,
     board_dirty_state,
     file_state,
     read_board_text,
@@ -135,7 +136,11 @@ def sync_from_disk(
             # Clean needs the editor, read now, to equal the file, read now. The
             # caller's editor_hash can only show an edit (True), never prove clean.
             # Issue #15.
-            ds = board_dirty_state(session, ref, editor_baseline_sha256=editor_hash)
+            # A clean state counts only if proven on the bytes checked above.
+            ds = bind_to_file(
+                board_dirty_state(session, ref, editor_baseline_sha256=editor_hash),
+                fs["sha256"],
+            )
             plans.append((ref, fs, ds, _snapshot_match(ds, handoff_snapshot_sha256)))
 
     protected = [ds for _, _, ds, snap in plans if ds.must_protect and not snap]

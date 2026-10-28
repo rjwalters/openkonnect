@@ -95,7 +95,13 @@ def test_header_lines_alone_or_line_breaking_alone_are_each_equal():
 
 def test_identical_text_is_the_same_document():
     assert same(FILE, FILE)
-    assert same(EDITOR, EDITOR)
+
+
+def test_editor_text_as_the_file_is_not_a_canonical_match():
+    # The header rule is editor-side only, so a file that itself carries the
+    # per-footprint header lists differs. (Byte-identical texts are matched by
+    # the byte comparison before same_document is consulted.)
+    assert not same(EDITOR, EDITOR)
 
 
 def test_line_endings_and_trailing_newline_are_whitespace():
@@ -171,10 +177,52 @@ def test_quoted_footprint_head_is_not_a_footprint():
     assert not same('(kicad_pcb ("footprint" "f" (version 2)))', '(kicad_pcb ("footprint" "f"))')
 
 
-def test_header_lines_are_ignored_on_either_side():
-    a = '(kicad_pcb (footprint "f" (version 2) (layer "F.Cu")))'
-    b = '(kicad_pcb (footprint "f" (generator "x") (layer "F.Cu")))'
-    assert same(a, b)
+def test_header_lines_are_ignored_on_the_editor_side_only():
+    with_header = '(kicad_pcb (footprint "f" (version 2) (layer "F.Cu")))'
+    base = '(kicad_pcb (footprint "f" (layer "F.Cu")))'
+    assert same(with_header, base)
+    assert not same(base, with_header)
+    other_header = '(kicad_pcb (footprint "f" (generator "x") (layer "F.Cu")))'
+    assert not same(with_header, other_header)
+
+
+# The two cases from the Judge's review of PR #48: a footprint header list in
+# the file is an unmeasured difference and must not be equated away.
+JUDGE_EDITOR = (
+    '(kicad_pcb (footprint "R" (version 20250114) (generator "pcbnew") '
+    '(generator_version "10.0") (at 1 2)))'
+)
+
+
+def test_file_with_a_footprint_version_line_is_not_the_same_document():
+    assert not same(JUDGE_EDITOR, '(kicad_pcb (footprint "R" (version 20171130) (at 1 2)))')
+
+
+def test_file_with_duplicate_footprint_header_lines_is_not_the_same_document():
+    file = '(kicad_pcb (footprint "R" (version 1)(version 2) (generator x) (at 1 2)))'
+    assert not same(JUDGE_EDITOR, file)
+
+
+def test_judge_editor_text_matches_a_file_without_header_lines():
+    assert same(JUDGE_EDITOR, '(kicad_pcb (footprint "R"\n\t(at 1 2)\n))\n')
+
+
+# -- the document must be one (kicad_pcb ...) list ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "editor, file",
+    [
+        pytest.param("", "", id="both empty"),
+        pytest.param(" ", "\n", id="both whitespace"),
+        pytest.param("(a)", "(a)", id="not kicad_pcb"),
+        pytest.param("(kicad_pcb) (kicad_pcb)", "(kicad_pcb) (kicad_pcb)", id="two boards"),
+        pytest.param("(kicad_pcb) x", "(kicad_pcb) x", id="trailing atom"),
+        pytest.param('("kicad_pcb")', '("kicad_pcb")', id="quoted head"),
+    ],
+)
+def test_only_a_single_kicad_pcb_list_can_match(editor, file):
+    assert not same(editor, file)
 
 
 # -- malformed input is never a match -----------------------------------------------

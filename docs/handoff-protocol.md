@@ -140,10 +140,19 @@ and the file bytes as token sequences:
   `"x"` and `x`.
 - Whitespace between tokens is ignored. That covers the line breaking of
   short lists, line endings and the trailing newline.
-- A list of the exact form `(version T)`, `(generator T)` or
-  `(generator_version T)`, with one atom or string `T`, is ignored on either
-  side when it is a direct child of a list whose head is the bare atom
+- In the **editor text only**, a list of the exact form `(version T)`,
+  `(generator T)` or `(generator_version T)`, with one atom or string `T`, is
+  ignored when it is a direct child of a list whose head is the bare atom
   `footprint`. The board header and the same lists anywhere else are kept.
+  The file is tokenized strictly: what was measured is that the editor text
+  adds these lists and KiCad's saved file has none. A footprint `(version …)`
+  in the file is an unmeasured difference (a loader may use it to read the
+  rest of the footprint), so it stays a difference and gives `unknown`.
+- The file must be exactly one top-level `(kicad_pcb …)` list, so an empty or
+  whitespace-only text never matches.
+- Whitespace between tokens is assumed to carry no meaning (for example, no
+  line-comment syntax). KiCad's own save form, which this compares against,
+  has none; the assumption was not probed separately.
 - Anything else is a difference: a changed, added, removed or reordered
   token, a missing uuid. Text that does not tokenize (an unterminated string,
   unbalanced parentheses, a truncated file, two atoms or strings with no
@@ -161,7 +170,12 @@ It also does not change the window above: an edit and an exact undo leave the
 same tokens as no edit, under byte equality too. In `save_before_external_write`
 the comparison after a save uses only the file bytes whose hash the result
 reports as `sha256`; a file written again in between is not compared, and
-`editor_matches_file` is `false`.
+`editor_matches_file` is `false`. The same binding holds without a save: the
+dirty check records the hash of the exact file bytes it compared
+(`DirtyState.file_sha256`), and a `false` counts only if that hash equals the
+hash the caller read first (the `sha256` that `save_before_external_write`
+reports, or the hash `sync_from_disk` checks against `expected_hash`). If the
+file was written between the two reads, the state is `unknown`.
 
 **Where `false` applies.** A canonical match gives `dirty: false` in every
 caller of the dirty check, not only inside `run_kct_handoff`: a

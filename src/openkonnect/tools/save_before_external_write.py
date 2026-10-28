@@ -19,6 +19,7 @@ from ..errors import ErrorCode, OpenKonnectError
 from ..session import (
     DirtyState,
     Session,
+    bind_to_file,
     board_dirty_state,
     editor_match,
     file_state,
@@ -146,7 +147,11 @@ def save_before_external_write(
     plans: list[tuple[BoardRef, dict[str, Any], DirtyState]] = []
     if want_board:
         for ref in boards:
-            plans.append((ref, file_state(ref.path), board_dirty_state(session, ref)))
+            before = file_state(ref.path)
+            # A clean state counts only if it was proven on the bytes whose hash
+            # this result reports as sha256 (issue #37).
+            ds = bind_to_file(board_dirty_state(session, ref), before["sha256"])
+            plans.append((ref, before, ds))
 
     protected = [(ref, ds) for ref, _, ds in plans if ds.must_protect]
     if protected and not allow_save:

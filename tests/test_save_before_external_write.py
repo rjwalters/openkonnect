@@ -377,3 +377,63 @@ def test_file_rewritten_after_the_save_check_is_not_matched(tmp_path, monkeypatc
     assert r["ok"] is True, r
     assert r["documents"][0]["editor_matches_file"] is False
     assert r["documents"][0]["match_basis"] is None
+
+
+def file_written_after_first_read(monkeypatch, module, new_text: str) -> None:
+    """Patch ``module.file_state``: the first read returns, then a third party writes."""
+    real = module.file_state
+    done = []
+
+    def read_then_third_party_writes(path):
+        fs = real(path)
+        if not done:
+            done.append(True)
+            Path(path).write_text(new_text)
+        return fs
+
+    monkeypatch.setattr(module, "file_state", read_then_third_party_writes)
+
+
+@pytest.mark.parametrize(
+    "first, second, editor",
+    [
+        # Canonical: both file forms equal the editor token for token, bytes differ.
+        pytest.param(
+            kicad_save_form(KICAD_EDITOR),
+            kicad_save_form(KICAD_EDITOR) + "\n",
+            KICAD_EDITOR,
+            id="canonical",
+        ),
+        # Bytes: the file only becomes byte-identical to the editor after the first read.
+        pytest.param(EDITED_TEXT, FILE_TEXT, FILE_TEXT, id="bytes"),
+    ],
+)
+def test_file_written_between_the_two_phase_1_reads_is_not_clean(
+    tmp_path, monkeypatch, first, second, editor
+):
+    # Phase 1 reads the file (the reported sha256), then board_dirty_state reads
+    # the editor and the file again. A match proven on the second read must not
+    # be reported against the first read's hash (Judge on PR #48, item 2).
+    ref = board_on_disk(tmp_path, first)
+    fake = KicadSaveFake(ref, editor)
+    file_written_after_first_read(monkeypatch, save_mod, second)
+    r = save(make_session(fake))
+    assert r["ok"] is False, r
+    assert r["error"]["code"] == "dirty_state_unknown"
+    assert "save_board" not in fake.calls
+    assert Path(ref.path).read_text() == second
+
+
+def test_no_save_result_reports_the_hash_of_the_compared_bytes(tmp_path, monkeypatch):
+    # Same race with allow_save: the board is saved rather than reported clean,
+    # and the reported sha256 is the hash of the bytes the match was proven on.
+    ref = board_on_disk(tmp_path, kicad_save_form(KICAD_EDITOR))
+    fake = KicadSaveFake(ref, KICAD_EDITOR)
+    file_written_after_first_read(monkeypatch, save_mod, kicad_save_form(KICAD_EDITOR) + "\n")
+    r = save(make_session(fake), allow_save=True)
+    assert r["ok"] is True, r
+    (doc,) = r["documents"]
+    assert doc["state_before"]["dirty"] == "unknown"
+    assert doc["action"] == "saved"
+    assert doc["editor_matches_file"] is True
+    assert doc["sha256"] == sha(Path(ref.path).read_text()) == sha(kicad_save_form(KICAD_EDITOR))

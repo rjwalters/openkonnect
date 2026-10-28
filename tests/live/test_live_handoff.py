@@ -36,17 +36,27 @@ from ..conftest import SELECTION_BOARD, remove_kct_artifacts
 pytestmark = pytest.mark.live_kicad
 
 
-def _remove_new_files(directory: Path, before: set[str]) -> None:
-    """Delete files that appeared in ``directory`` during the test.
+#: Files ``kct route`` writes beside ``selection.kicad_pcb`` besides the route
+#: record (``remove_kct_artifacts``); ``{stem}`` is the board's stem.
+KCT_ROUTE_OUTPUTS = (
+    "fab_profile.json",
+    "net_class_map.json",
+    "{stem}.access_witness.json",
+    "{stem}.kicad_dru",
+    "{stem}.routing_plan.json",
+)
 
-    ``kct route`` on ``selection.kicad_pcb`` also writes ``fab_profile.json``,
-    ``net_class_map.json`` and ``selection.{access_witness.json,kicad_dru,
-    routing_plan.json}`` beside the board. KiCad's own lock files belong to the
-    open editor and are left alone.
+
+def _remove_new_files(board: Path, before: set[str]) -> None:
+    """Delete the known ``kct route`` outputs that appeared beside ``board``.
+
+    Only names in :data:`KCT_ROUTE_OUTPUTS` that were not there before the test
+    are removed, so nothing else created in the directory meanwhile is touched.
     """
-    for p in directory.iterdir():
-        if p.name not in before and p.is_file() and not p.name.endswith(".lck"):
-            p.unlink(missing_ok=True)
+    for pattern in KCT_ROUTE_OUTPUTS:
+        name = pattern.format(stem=board.stem)
+        if name not in before:
+            (board.parent / name).unlink(missing_ok=True)
 
 
 @pytest.fixture
@@ -67,7 +77,7 @@ def open_fixture(live_session):
         path.write_bytes(original)
     finally:
         remove_kct_artifacts(path)
-        _remove_new_files(path.parent, before)
+        _remove_new_files(path, before)
     live_session.run_tool(lambda s: sync_from_disk(s, "board", discard_unsaved=True))
 
 

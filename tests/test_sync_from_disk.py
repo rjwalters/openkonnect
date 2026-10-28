@@ -418,3 +418,24 @@ def test_public_sync_after_a_kicad_save_reloads_without_discard(tmp_path):
     assert r["ok"] is True, r
     assert r["documents"][0]["state_before"]["dirty"] is False
     assert r["documents"][0]["discarded_unsaved"] is False
+
+
+def test_file_written_after_the_expected_hash_check_is_not_clean(tmp_path, monkeypatch):
+    # The clean state must be proven on the bytes whose hash was checked against
+    # expected_hash; a write in between leaves it unknown (Judge on PR #48, item 2).
+    from openkonnect.tools import sync_from_disk as sync_mod
+
+    from .test_save_before_external_write import (
+        KICAD_EDITOR,
+        file_written_after_first_read,
+        kicad_save_form,
+    )
+
+    first = kicad_save_form(KICAD_EDITOR)
+    ref = board_on_disk(tmp_path, first)
+    fake = SyncFake(ref, KICAD_EDITOR)
+    file_written_after_first_read(monkeypatch, sync_mod, first + "\n")
+    r = sync(make_session(fake), expected_hash=sha(first))
+    assert r["ok"] is False, r
+    assert r["error"]["code"] == "dirty_state_unknown"
+    assert "revert_board" not in fake.calls

@@ -572,6 +572,10 @@ class DirtyState:
     editor_sha256: str | None = None
     #: How a ``False`` was proven: ``"bytes"`` or ``"canonical"`` (issue #37).
     match_basis: str | None = None
+    #: SHA-256 of the exact file bytes a ``False`` was proven against. A caller
+    #: that reports or checks a file hash read separately must bind the two with
+    #: :func:`bind_to_file`.
+    file_sha256: str | None = None
 
     @property
     def must_protect(self) -> bool:
@@ -638,6 +642,26 @@ def editor_match(session: Session, text: str, on_disk: bytes | None) -> str | No
     return None
 
 
+def bind_to_file(ds: DirtyState, file_sha256: str | None) -> DirtyState:
+    """``ds``, unless it is clean against file bytes other than ``file_sha256``.
+
+    :func:`board_dirty_state` reads the file itself. A caller that read the file
+    separately (to report its hash, or to check it against an expected hash)
+    gets a ``False`` only if the match was proven on bytes with that same hash.
+    If the file was written between the two reads, the match does not hold for
+    the bytes the caller reports, so the state becomes ``unknown`` (issue #37).
+    """
+    if ds.dirty is not False or (file_sha256 is not None and ds.file_sha256 == file_sha256):
+        return ds
+    return DirtyState(
+        "unknown",
+        BASIS_CONTENT,
+        "The file on disk changed while openkonnect compared it with the editor, so the "
+        "match does not hold for the file it reports. It counts as dirty.",
+        ds.editor_sha256,
+    )
+
+
 def board_dirty_state(
     session: Session,
     ref: BoardRef,
@@ -688,6 +712,7 @@ def board_dirty_state(
             "The editor content is byte-identical to the saved file.",
             h,
             match,
+            sha256_bytes(on_disk),
         )
     if match == kicad_text.MATCH_CANONICAL:
         return DirtyState(
@@ -698,6 +723,7 @@ def board_dirty_state(
             "which is how this KiCad version's save differs from its editor text.",
             h,
             match,
+            sha256_bytes(on_disk),
         )
     if editor_baseline_sha256 is not None and h != editor_baseline_sha256:
         return DirtyState(
