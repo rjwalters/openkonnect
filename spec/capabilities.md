@@ -297,7 +297,19 @@ control, and grouping edits into transactions. Every entry here is live-editor.
   - `expected_hash`: optional, normally from SES-04.
 - **Behaviour:**
   - If the editor is dirty or `unknown` and `discard_unsaved` is not set,
-    refuse and change nothing.
+    refuse and change nothing. The editor is clean only when its content,
+    read during this call, is byte-identical to the file, also read during
+    this call. A caller-supplied hash (`editor_hash`, the editor content hash
+    from SES-04, or `expected_hash`) can only show the editor changed or leave
+    the state `unknown`; it never proves the editor clean.
+  - Inside [SES-06](#ses-06-run_kct_handoff-and-the-handoff-protocol) only, an
+    `unknown` editor may be reloaded without `discard_unsaved` when its
+    content, read during this call, hashes to the snapshot the handoff took of
+    its own save in the same handoff call (the snapshot rule). The snapshot is
+    never a caller input, and it never relaxes a changed (dirty) editor.
+  - With `discard_unsaved`, nothing is refused or reported first: unsaved
+    work, including an edit detected through `editor_hash`, is discarded, and
+    the result says so.
   - Otherwise reload the document from disk, keeping the view (zoom, pan,
     layers) where KiCad allows.
   - Afterwards, check that the editor content matches the file.
@@ -330,8 +342,15 @@ control, and grouping edits into transactions. Every entry here is live-editor.
   4. If the command failed, stop. Do not reload. Report whether the file
      changed.
   5. If the file did not change, skip the reload.
-  6. Otherwise, run [SES-05](#ses-05-sync_from_disk) with the hash. Its dirty
-     check protects any edit the user made while the command ran.
+  6. Otherwise, run [SES-05](#ses-05-sync_from_disk) with the hash and the
+     snapshot rule: at step 2 the tool records the hash of the exact content
+     it saved (or proved byte-identical to the file); after the command, it
+     reloads without `discard_unsaved` only if a fresh read of the editor
+     hashes to that snapshot. An editor that changed meanwhile is refused
+     with `document_dirty`. Without a snapshot the reload is refused as
+     `unknown`. `discard_unsaved` overrides both. One window remains: a human
+     save plus an exact undo during step 3 matches the snapshot, so the reload
+     loads the human's saved file (which replaced the command's output).
   7. Report the result.
 - **Inputs:**
   - `command`: a `kct` subcommand and its arguments, from an allow-list of
@@ -348,9 +367,10 @@ control, and grouping edits into transactions. Every entry here is live-editor.
   - a command missing from the allow-list gives `invalid_argument`;
   - a command that runs past the timeout is stopped. The file state is then
     reported as found, and the editor is not reloaded;
-  - the user edits during step 3: step 6 refuses with `document_dirty` and says
-    that the file holds the command's output while the editor holds the
-    user's edits.
+  - the user edits during step 3: step 6 refuses with `document_dirty`,
+    reports the command's result too, and says that the file holds the
+    command's output while the editor holds the user's edits. With
+    `discard_unsaved` the edit is discarded and the result says so.
 - **Test requirement (#4):** an end-to-end test wraps one real `kct` write,
   such as `kct route`, in this protocol against a fixture board open in
   KiCad.

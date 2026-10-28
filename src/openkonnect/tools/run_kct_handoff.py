@@ -8,8 +8,16 @@ The seven steps of the handoff protocol (``docs/handoff-protocol.md``):
 3. run the ``kct`` command on the saved file (allow-listed, never a shell);
 4. if the command failed or timed out, stop without reloading;
 5. if the file did not change, skip the reload;
-6. otherwise ``sync_from_disk`` with both hashes, so an edit the user made
-   while the command ran is refused with ``document_dirty``;
+6. otherwise ``sync_from_disk`` with both hashes and the handoff's own
+   snapshot: the hash of the content step 2 saved (or proved byte-identical to
+   the file), taken inside this call and never from a caller. The reload goes
+   ahead without ``discard_unsaved`` only if the editor, read fresh at step 6,
+   still hashes to that snapshot, so nothing changed in KiCad while the
+   command ran. An edit made meanwhile is refused with ``document_dirty``,
+   alongside the command's result; ``discard_unsaved=True`` overrides it and
+   the result says the edit was discarded. Without a snapshot (the editor text
+   could not be read, or did not match the saved file) the reload is refused
+   with ``dirty_state_unknown`` (issue #15);
 7. report.
 
 Each IPC step runs under the normal per-call bound (C-4). The command has its
@@ -45,7 +53,8 @@ DESCRIPTION = (
     "(allow_save=true is needed when dirty state is unknown, as on KiCad 10), run the "
     "command with a timeout, then reload the editor from the file only if the command "
     "succeeded and changed it. An edit made in KiCad while the command ran makes the "
-    "reload refuse with document_dirty. command is an argv list without 'kct', and must "
+    "reload refuse with document_dirty, and nothing is lost; discard_unsaved=true reloads "
+    "anyway and discards that edit. command is an argv list without 'kct', and must "
     "contain the token {board}, which is replaced by the board's path, e.g. "
     '["route", "{board}", "-o", "{board}"]. Board only on KiCad 10.'
 )
@@ -259,6 +268,11 @@ def run_kct_handoff(
     t0 = time.monotonic()
     try:
         res = (runner or default_runner)(full, float(timeout_s), _cwd(out["board"]))
+    except OpenKonnectError as e:
+        # A runner that already speaks openkonnect's error model: pass its error
+        # through unchanged, inside the handoff envelope.
+        steps.append({"step": 3, "name": "kct", "outcome": "runner_error"})
+        return fail("kct", e)
     except OSError as e:
         steps.append({"step": 3, "name": "kct", "outcome": "failed_to_start"})
         return fail(
@@ -267,6 +281,17 @@ def run_kct_handoff(
                 ErrorCode.KICAD_TOOLS_FAILED,
                 "kct could not be started. See details.",
                 details={"exception": str(e)},
+            ),
+        )
+    except Exception as e:  # noqa: BLE001 - any runner failure must stop the handoff
+        steps.append({"step": 3, "name": "kct", "outcome": "runner_error"})
+        return fail(
+            "kct",
+            OpenKonnectError(
+                ErrorCode.KICAD_TOOLS_FAILED,
+                "Running kct failed with an unexpected error, so the editor was not "
+                "reloaded. See details.",
+                details={"exception": type(e).__name__, "message": str(e)},
             ),
         )
     after = file_state(board_path)
@@ -325,7 +350,17 @@ def run_kct_handoff(
         return {"ok": True, **out, "meta": meta()}
     steps.append({"step": 5, "name": "check_file_changed", "outcome": "changed"})
 
-    # Step 6: reload, protected by the editor hash recorded at step 2.
+    # Step 6: reload, protected by the editor content this call saved at step 2.
+    # The snapshot is the handoff's own: the hash of the content step 2 saved (or
+    # proved byte-identical to the file), never a caller value. It counts only if
+    # the editor text and the file matched exactly at step 2.
+    snapshot = (
+        saved["editor_sha256"]
+        if saved.get("editor_matches_file") is True
+        and saved["editor_sha256"] is not None
+        and saved["editor_sha256"] == saved["sha256"]
+        else None
+    )
     r = session.run_tool(
         lambda s: sync_from_disk(
             s,
@@ -333,24 +368,42 @@ def run_kct_handoff(
             discard_unsaved=discard_unsaved,
             expected_hash=after["sha256"],
             editor_hash=saved["editor_sha256"],
+            handoff_snapshot_sha256=snapshot,
         )
     )
     if not r["ok"]:
         steps.append({"step": 6, "name": "sync_from_disk", "outcome": "refused"})
         err = r["error"]
-        if err["code"] in (ErrorCode.DOCUMENT_DIRTY.value, ErrorCode.DIRTY_STATE_UNKNOWN.value):
+        if err["code"] == ErrorCode.DOCUMENT_DIRTY.value:
             err["details"]["handoff_state"] = (
-                "The file on disk holds the command's output, and the editor holds its "
-                "previous state plus any edits made in KiCad meanwhile. Nothing was lost "
+                "The editor changed in KiCad while the command ran, so the reload was "
+                "refused. The file on disk holds the command's output, and the editor holds "
+                "its previous state plus the edits made in KiCad meanwhile. Nothing was lost "
                 "yet: either save from KiCad (keeping your edits and dropping the "
                 "command's), or re-run sync_from_disk with discard_unsaved=true (keeping the "
                 "command's output and dropping the edits)."
+            )
+        elif err["code"] == ErrorCode.DIRTY_STATE_UNKNOWN.value:
+            err["details"]["handoff_state"] = (
+                "The file on disk holds the command's output. openkonnect could not take a "
+                "snapshot of the editor at the save (KiCad did not serve its text, or it "
+                "did not match the saved file), so it cannot prove the editor holds nothing "
+                "the new file lacks (KiCad 10 has no dirty query). Nothing was lost yet: "
+                "if you made no edits in KiCad you need, re-run sync_from_disk with "
+                "discard_unsaved=true (keeping the command's output), or save from KiCad "
+                "(keeping the editor's state and dropping the command's)."
             )
         return fail("sync_from_disk", err)
     synced = r["documents"][0]
     keep = ("discarded_unsaved", "view_kept", "verified", "editor_changed")
     steps.append(
-        {"step": 6, "name": "sync_from_disk", "outcome": "reloaded", **{k: synced[k] for k in keep}}
+        {
+            "step": 6,
+            "name": "sync_from_disk",
+            "outcome": "reloaded",
+            "snapshot_matched": synced.get("reload_basis") == "handoff_snapshot",
+            **{k: synced[k] for k in keep},
+        }
     )
 
     # Step 7: report.

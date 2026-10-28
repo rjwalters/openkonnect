@@ -150,6 +150,26 @@ def test_dirty_or_unknown_with_allow_save_saves_and_verifies(tmp_path, monkeypat
     assert Path(ref.path).read_text() == EDITED_TEXT
 
 
+@pytest.mark.parametrize(
+    ("editor", "on_disk"),
+    [(FILE_TEXT, FILE_TEXT), (EDITED_TEXT, FILE_TEXT), (FILE_TEXT, EDITED_TEXT)],
+)
+def test_clean_only_by_byte_identity_with_the_file(tmp_path, editor, on_disk):
+    # No caller hash reaches this check, so False needs the editor text to equal the file.
+    ref = board_on_disk(tmp_path, on_disk)
+    r = save(make_session(SyncFake(ref, editor)))
+    states = [d["state_before"] for d in r.get("documents") or r["error"]["details"]["documents"]]
+    for st in states:
+        assert (st["dirty"] is False) == (editor == on_disk)
+
+
+def test_next_does_not_offer_a_hash_as_a_clean_proof(tmp_path):
+    ref = board_on_disk(tmp_path)
+    r = save(make_session(SyncFake(ref)))
+    assert "editor_file_hash" not in r["next"]
+    assert "cannot prove the board clean" in r["next"]
+
+
 def test_text_not_served_is_unknown_with_basis_none(tmp_path):
     ref = board_on_disk(tmp_path)
     fake = SyncFake(ref, text_supported=False)

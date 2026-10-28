@@ -114,8 +114,57 @@ def test_clean_board_full_protocol(tmp_path):
     assert r["exit_code"] == 0
     assert r["output_json"] == {"routed": 3}
     assert r["final_state"]["reloaded"] is True
+    assert r["steps"][5]["discarded_unsaved"] is False
+    assert r["steps"][5]["snapshot_matched"] is True
     assert fake.editor == KCT_TEXT
     assert "Ctrl+Z" in r["undo_note"]
+
+
+def test_no_snapshot_without_discard_refuses_unknown_at_step_6(tmp_path, monkeypatch):
+    # If step 2 could not prove the editor text equal to the saved file, there is no
+    # snapshot, and no recorded hash can prove the editor clean. Issue #15.
+    from openkonnect.tools import run_kct_handoff as handoff_mod
+
+    real = handoff_mod.save_before_external_write
+
+    def no_match(*a, **kw):
+        out = real(*a, **kw)
+        out["documents"][0]["editor_matches_file"] = "unknown"
+        return out
+
+    monkeypatch.setattr(handoff_mod, "save_before_external_write", no_match)
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    r = handoff(make_session(fake))
+    assert r["ok"] is False, r
+    assert r["failed_step"] == "sync_from_disk"
+    assert r["error"]["code"] == "dirty_state_unknown"
+    assert "discard_unsaved=true" in r["error"]["details"]["handoff_state"]
+    assert "revert_board" not in fake.calls
+    assert fake.editor == FILE_TEXT
+    assert Path(ref.path).read_text() == KCT_TEXT
+
+
+def test_human_save_then_undo_during_command_loads_the_human_save(tmp_path):
+    # The documented window (docs/handoff-protocol.md, SES-06): during the kct run
+    # the human saves an edit from KiCad (the file now holds it) and undoes it
+    # exactly (the editor is back to the step-2 snapshot). The snapshot matches, so
+    # the reload loads the human's saved file over the editor. The edit is kept on
+    # disk and in the editor; the command's output, which the human's save
+    # replaced, is not.
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+
+    def human_saves_then_undoes():
+        Path(ref.path).write_text(EDITED_TEXT)  # save from KiCad; the editor then undoes
+
+    r = handoff(make_session(fake), FakeKct(during=human_saves_then_undoes))
+    assert r["ok"] is True, r
+    assert r["steps"][5]["snapshot_matched"] is True
+    assert r["steps"][5]["discarded_unsaved"] is False
+    assert "revert_board" in fake.calls
+    assert fake.editor == EDITED_TEXT
+    assert Path(ref.path).read_text() == EDITED_TEXT
 
 
 def test_unknown_dirty_needs_allow_save_and_command_never_runs(tmp_path):
@@ -136,6 +185,7 @@ def test_allow_save_then_reload_without_discard(tmp_path):
     assert r["ok"] is True, r
     assert r["steps"][1]["outcome"] == "saved"
     assert r["steps"][5]["discarded_unsaved"] is False
+    assert r["steps"][5]["snapshot_matched"] is True
     assert fake.editor == KCT_TEXT
 
 
@@ -154,6 +204,159 @@ def test_user_edit_during_command_refuses_at_step_6(tmp_path):
     assert "revert_board" not in fake.calls
     assert fake.editor == EDITED_TEXT
     assert Path(ref.path).read_text() == KCT_TEXT
+    # Both the command's result and the refusal are reported, for recovery.
+    assert r["exit_code"] == 0
+    assert r["steps"][2]["name"] == "kct" and r["steps"][2]["outcome"] == "ok"
+    assert r["steps"][2]["file_changed"] is True
+    assert r["steps"][-1] == {"step": 6, "name": "sync_from_disk", "outcome": "refused"}
+
+
+@pytest.mark.parametrize("allow_save", [False, True])
+def test_user_edit_during_command_after_a_save_refuses_at_step_6(tmp_path, allow_save):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref, EDITED_TEXT if allow_save else None)
+    later = '(kicad_pcb (version 20241229) (generator "pcbnew") (later edit))\n'
+
+    def user_edits():
+        fake.editor = later
+
+    r = handoff(make_session(fake), FakeKct(during=user_edits), allow_save=allow_save)
+    assert r["ok"] is False, r
+    assert r["error"]["code"] == "document_dirty"
+    assert "revert_board" not in fake.calls
+    assert fake.editor == later
+
+
+def test_user_edit_during_command_with_discard_reloads_and_says_so(tmp_path):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+
+    def user_edits():
+        fake.editor = EDITED_TEXT
+
+    r = handoff(make_session(fake), FakeKct(during=user_edits), discard_unsaved=True)
+    assert r["ok"] is True, r
+    assert r["steps"][5]["outcome"] == "reloaded"
+    assert r["steps"][5]["discarded_unsaved"] is True
+    assert r["steps"][5]["snapshot_matched"] is False
+    assert fake.editor == KCT_TEXT
+
+
+def test_snapshot_cannot_be_supplied_by_the_caller(tmp_path):
+    # run_kct_handoff takes no snapshot argument, and the MCP tools do not expose one.
+    import inspect
+
+    from openkonnect.server import build_server
+
+    ref = board_on_disk(tmp_path)
+    with pytest.raises(TypeError):
+        run_kct_handoff(
+            make_session(SyncFake(ref)),
+            ROUTE,
+            runner=FakeKct(),
+            kct="/bin/kct",
+            handoff_snapshot_sha256="x",
+        )
+    assert "snapshot" not in " ".join(inspect.signature(run_kct_handoff).parameters)
+    import anyio
+
+    tools = anyio.run(build_server(make_session(SyncFake(ref))).list_tools)
+    for t in tools:
+        assert not any("snapshot" in p for p in (t.inputSchema.get("properties") or {})), t.name
+
+
+def test_snapshot_comes_from_this_calls_own_save(tmp_path, monkeypatch):
+    # Whatever the caller passes, step 6 is given the hash step 2 saved in this call.
+    from openkonnect.tools import run_kct_handoff as handoff_mod
+
+    seen = {}
+    real = handoff_mod.sync_from_disk
+
+    def spy(session, *a, **kw):
+        seen.update(kw)
+        return real(session, *a, **kw)
+
+    monkeypatch.setattr(handoff_mod, "sync_from_disk", spy)
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+
+    def user_edits():
+        fake.editor = EDITED_TEXT
+
+    r = handoff(make_session(fake), FakeKct(during=user_edits))
+    assert r["ok"] is False
+    assert seen["handoff_snapshot_sha256"] == r["steps"][1]["editor_sha256"]
+    assert seen["handoff_snapshot_sha256"] == r["steps"][1]["sha256"]
+
+
+def test_handoff_passes_no_hash_that_could_prove_clean(tmp_path, monkeypatch):
+    from openkonnect.tools import run_kct_handoff as handoff_mod
+
+    seen = {}
+    real = handoff_mod.sync_from_disk
+
+    def spy(session, *a, **kw):
+        seen.update(kw)
+        return real(session, *a, **kw)
+
+    monkeypatch.setattr(handoff_mod, "sync_from_disk", spy)
+    ref = board_on_disk(tmp_path)
+    r = handoff(make_session(SyncFake(ref)))
+    assert r["ok"] is True, r
+    assert set(seen) == {
+        "discard_unsaved",
+        "expected_hash",
+        "editor_hash",
+        "handoff_snapshot_sha256",
+    }
+    assert seen["editor_hash"] == r["steps"][1]["editor_sha256"]
+    assert seen["expected_hash"] == r["steps"][2]["sha256_after"]
+    assert seen["handoff_snapshot_sha256"] == r["steps"][1]["editor_sha256"]
+    assert r["steps"][5]["discarded_unsaved"] is False
+
+
+def raising(exc):
+    def runner(argv, timeout_s, cwd):
+        raise exc
+
+    return runner
+
+
+@pytest.mark.parametrize("exc", [RuntimeError("boom"), ValueError("bad value")])
+def test_runner_error_is_kicad_tools_failed_without_reload(tmp_path, exc):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    r = handoff(make_session(fake), raising(exc))
+    assert r["ok"] is False
+    assert r["failed_step"] == "kct"
+    assert r["error"]["code"] == "kicad_tools_failed"
+    assert r["error"]["details"]["exception"] == type(exc).__name__
+    assert r["error"]["details"]["message"] == str(exc)
+    assert r["steps"][-1] == {"step": 3, "name": "kct", "outcome": "runner_error"}
+    assert r["command"][0] == "kct"
+    assert "revert_board" not in fake.calls
+
+
+def test_runner_oserror_is_failed_to_start(tmp_path):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    r = handoff(make_session(fake), raising(FileNotFoundError("no kct")))
+    assert r["error"]["code"] == "kicad_tools_failed"
+    assert r["steps"][-1]["outcome"] == "failed_to_start"
+    assert "revert_board" not in fake.calls
+
+
+def test_runner_openkonnect_error_passes_through(tmp_path):
+    from openkonnect.errors import ErrorCode, OpenKonnectError
+
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    err = OpenKonnectError(ErrorCode.TIMEOUT, "runner gave up", details={"x": 1})
+    r = handoff(make_session(fake), raising(err))
+    assert r["ok"] is False
+    assert r["failed_step"] == "kct"
+    assert r["error"] == err.to_dict()
+    assert "revert_board" not in fake.calls
 
 
 def test_command_failure_stops_without_reload(tmp_path):
