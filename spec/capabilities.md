@@ -132,7 +132,11 @@ reference that matches nothing gives `not_found`, and one that matches more than
 one item gives `ambiguous_reference`. Neither is ever guessed.
 
 **C-3 Errors.** A failure is structured. It carries a stable `code`, a sentence
-saying what to do, a `retryable` flag, and details. Codes used in this spec:
+saying what to do, a `retryable` flag, and details. Codes used in this spec are
+listed below. The first table holds the codes the server emits today (the
+`ErrorCode` values in `src/openkonnect/errors.py`; a test keeps the two in
+step). The second holds codes reserved for tools this spec plans but that are
+not yet emitted.
 
 | Code | Meaning |
 |------|---------|
@@ -146,10 +150,20 @@ saying what to do, a `retryable` flag, and details. Codes used in this spec:
 | `document_dirty` | Refused to protect unsaved editor changes |
 | `dirty_state_unknown` | Refused because unsaved changes could not be ruled out |
 | `unsupported_on_this_kicad` | The documented API lacks the feature on this version; carries the minimum version when known |
-| `not_found`, `ambiguous_reference`, `invalid_argument` | Bad input |
+| `not_found`, `invalid_argument` | Bad input |
 | `stale_input` | The input was computed from a board state that has since changed |
+| `save_failed` | KiCad could not save the document, or reported success but the file on disk is unchanged ([SES-04](#ses-04-save_before_external_write)) |
+| `reload_failed` | KiCad rejected the file on reload (for example it does not parse), so the board was not reloaded; `details.editor_state` says whether the editor still holds its previous state ([SES-05](#ses-05-sync_from_disk)) |
+| `kicad_tools_failed` | A delegated kicad-tools command failed, could not be started, or is absent |
+| `internal_error` | An unexpected failure inside openkonnect, or a KiCad reply it cannot map to another code; returned as data, never as a raw exception |
+
+Reserved, not yet emitted:
+
+| Code | Meaning |
+|------|---------|
+| `ambiguous_reference` | Bad input: a reference matches more than one item |
 | `locked_item` | The item is locked and the caller did not allow editing locked items |
-| `kicad_tools_failed`, `kicad_cli_missing`, `kicad_cli_failed` | A delegated tool failed or is absent |
+| `kicad_cli_missing`, `kicad_cli_failed` | `kicad-cli` failed or is absent |
 
 **C-4 Bounded time.** Every call finishes within a timeout the caller can see.
 No tool waits forever on KiCad. Retries on `kicad_busy` are bounded, and the
@@ -279,10 +293,10 @@ control, and grouping edits into transactions. Every entry here is live-editor.
     closed the schematic, and the result records that the caller asserted it.
 - **Failure modes:**
   - `document_dirty` or `dirty_state_unknown`, naming the documents;
-  - the save fails inside KiCad (for example a read-only file, or a dialog
-    blocking it): the error says which;
-  - the save reports success but the file on disk is unchanged: reported as a
-    failure, not as success;
+  - `save_failed` when the save fails inside KiCad (for example a read-only
+    file, or a dialog blocking it): the error says which;
+  - `save_failed` when the save reports success but the file on disk is
+    unchanged: reported as a failure, not as success;
   - the C-3 connection errors.
 - **Sources:** P-R2, P-D2, P-D4.
 
@@ -322,8 +336,8 @@ control, and grouping edits into transactions. Every entry here is live-editor.
   - `document_dirty` or `dirty_state_unknown`;
   - the file is missing, or does not match `expected_hash`: refuse and leave the
     editor as it is, since an unexpected write could be a third party;
-  - KiCad rejects the file (for example it does not parse): report that the
-    editor still holds the previous state;
+  - `reload_failed` when KiCad rejects the file (for example it does not
+    parse): report that the editor still holds the previous state;
   - the C-3 connection errors.
 - **Sources:** P-R2, P-D4.
 

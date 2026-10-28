@@ -4,10 +4,11 @@ An MIT-licensed MCP server that lets an LLM agent drive a **running KiCad 10**:
 schematic, layout, placement, routing, design review and manufacturing tools,
 through KiCad's IPC API.
 
-> **Status: Phase 0 bootstrap.** The MCP server runs and exposes two read-only
-> tools, `session_status` and `board_summary`. See [ROADMAP.md](ROADMAP.md) for
-> the plan and [spec/capabilities.md](spec/capabilities.md) for what each tool
-> does.
+> **Status: Phase 0 bootstrap.** The MCP server runs and exposes read-only
+> tools that inspect the session and the open board, plus the save, sync and
+> handoff tools that write files or reload the editor (see [Tools](#tools)).
+> See [ROADMAP.md](ROADMAP.md) for the plan and
+> [spec/capabilities.md](spec/capabilities.md) for what each tool does.
 
 ## Quickstart
 
@@ -58,8 +59,13 @@ For clients configured with JSON (Claude Desktop, Cursor and similar):
 
 | Tool | Spec | What it returns |
 |------|------|-----------------|
-| `session_status` | SES-01 | Whether KiCad is running and its API reachable, versions, instance, project directory, open documents with dirty state, capability flags. "Not running" and "API disabled" come back as data, not errors. |
-| `board_summary` | LAY-01 | Live overview of the open board: path, title block, layer counts, counts of footprints, nets, tracks, vias and zones, outline size, dirty state. |
+| `session_status` | SES-01 | Whether KiCad is running and its API reachable, versions, instance, project directory, open documents with dirty state, and which tools this instance supports. "Not running" and "API disabled" come back as data, not errors. |
+| `board_summary` | LAY-01 | Live overview of the open board, unsaved changes included: path, title block, layer counts, counts of footprints, nets, tracks, vias and zones, outline size, dirty state. |
+| `get_selection` | SES-08 | What is selected in the PCB editor, as file-level references `kct` accepts (reference designators, `REF.PAD`, nets), plus other items with session-scoped ids and the selection's bounding box. An empty selection is an ordinary result. |
+| `show_findings` | SES-09 | Selects in the editor the items that kicad-tools findings (`kct ... --format json`) point at, and reports per finding what resolved, what did not and why, and which findings may be stale. |
+| `save_before_external_write` | SES-04 | Before a `kct` command touches the open board: each document's state before, the action taken (none, saved or refused), and the file and editor hashes to pass to `sync_from_disk`. Refuses a dirty or unknown board unless `allow_save`. See [the handoff protocol](docs/handoff-protocol.md). |
+| `sync_from_disk` | SES-05 | After a `kct` command wrote the board: per document, whether the editor was reloaded from the file and whether unsaved changes were discarded. Refuses, changing nothing, when the editor may hold unsaved work, unless `discard_unsaved`. See [the handoff protocol](docs/handoff-protocol.md). |
+| `run_kct_handoff` | SES-06 | Runs one allow-listed `kct` write command on the open board through the whole protocol (check, save, run, reload only on success) and reports each step and the command's result. See [the handoff protocol](docs/handoff-protocol.md). |
 
 On KiCad 10, `dirty` is always `"unknown"` with `dirty_basis: "none"`: KiCad
 10's API cannot report unsaved changes. Treat `unknown` as dirty.
