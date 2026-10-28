@@ -28,10 +28,10 @@ it for you. Any other tool can follow the same steps by hand with
 6. **Reload.** `sync_from_disk` with `expected_hash` (the file's hash after
    step 3) and `editor_hash` (`editor_sha256` from step 2). `run_kct_handoff`
    also applies the **snapshot rule** below, so a clean handoff reloads
-   without `discard_unsaved` when the editor text matches the saved file (on
-   KiCad 10.0.7 it never does, so the reload needs `discard_unsaved`; see "Is
-   the editor text byte-identical to a KiCad save?"). If the user edited the board while the command
-   ran, the reload refuses with `document_dirty`, and the result reports both
+   without `discard_unsaved` when the editor text matches the saved file
+   (byte for byte, or on KiCad 10.0.7 by the strict token comparison; see "Is
+   the editor text byte-identical to a KiCad save?"). If the user edited the
+   board while the command ran, the reload refuses with `document_dirty`, and the result reports both
    the command's outcome and the refusal.
 7. **Report.** One record per step, the command's exit code and JSON output,
    and the final document state.
@@ -39,8 +39,8 @@ it for you. Any other tool can follow the same steps by hand with
 ### The snapshot rule (`run_kct_handoff` only)
 
 Within one `run_kct_handoff` call, step 2 saves the editor (or proves the
-editor text byte-identical to the file) and records the hash of that exact
-content. This snapshot is taken by the tool itself; it is never an argument
+editor text equal to the file, by the rule in "Dirty state: the tri-state")
+and records the hash of that exact editor content. This snapshot is taken by the tool itself; it is never an argument
 and no caller value can stand in for it. At step 6, openkonnect reads the
 editor text fresh:
 
@@ -54,7 +54,8 @@ editor text fresh:
   `discard_unsaved` overrides this: the reload goes ahead and the result says
   `discarded_unsaved: true`.
 - **No snapshot** (KiCad did not serve the text at step 2, or it did not match
-  the saved file): the reload refuses with `dirty_state_unknown` unless
+  the saved file, which is always the case after a save on a KiCad version not
+  on the measured allow-list): the reload refuses with `dirty_state_unknown` unless
   `discard_unsaved` is set.
 
 A plain `sync_from_disk` call has no snapshot. There, `editor_hash` can only
@@ -101,12 +102,15 @@ Every document carries `dirty` (`true`, `false` or `"unknown"`) and
 How `content_comparison` decides, from the editor text that kicad-python's
 `Board.get_as_string()` returns:
 
-- **Against the saved file:** `false` only if the editor text is
-  byte-identical to the file, since then nothing in the editor is missing from
-  the file. Any difference gives `unknown`, because it may be unsaved work or
-  only a formatting difference between KiCad's serializer and whatever wrote
-  the file. On KiCad 10.0.7 that includes KiCad's own save, so this rule never
-  gives `false` there (measured; see "Is the editor text byte-identical to a
+- **Against the saved file:** `false` only if the editor text equals the
+  file, since then nothing in the editor is missing from the file. "Equals"
+  means byte-identical (`match_basis: "bytes"`), or, on a KiCad version on the
+  measured allow-list, equal by the strict token comparison below
+  (`match_basis: "canonical"`). Any other difference gives `unknown`, because
+  it may be unsaved work or only a formatting difference between KiCad's
+  serializer and whatever wrote the file. On KiCad 10.0.7 KiCad's own save is
+  never byte-identical to the editor text, so there `false` comes from the
+  token comparison (measured; see "Is the editor text byte-identical to a
   KiCad save?").
 - **Against a baseline (`editor_hash`):** the hash of the editor text recorded
   right after a save. Changed since then gives `true`: someone edited the
@@ -115,7 +119,7 @@ How `content_comparison` decides, from the editor text that kicad-python's
   editor text is also byte-identical to the file now.
 
 `false` comes only from the first rule: openkonnect reads the editor text and
-the file during the same call and they are byte-identical. No hash a caller
+the file during the same call and they are equal by that rule. No hash a caller
 passes (`editor_hash`, `expected_hash`) can produce `false`; a caller hash can
 only move the result to `true` or `unknown`. A recorded hash cannot prove
 clean because the file may have changed under it: a human save in KiCad
@@ -124,6 +128,61 @@ it differs from the file, and a reload would silently discard that state
 (issue #15).
 
 If KiCad does not serve the text, dirty is `unknown` with basis `none`.
+
+### The strict token comparison (KiCad 10.0.7 only)
+
+`src/openkonnect/kicad_text.py` (`same_document`) compares the editor text
+and the file bytes as token sequences:
+
+- Both sides are split into `(`, `)`, quoted strings and bare atoms. A quoted
+  string is kept verbatim, quotes and escapes included, so `"A B"` and `"AB"`
+  differ. A bare atom is kept verbatim, so `1` and `1.0` differ, and so do
+  `"x"` and `x`.
+- Whitespace between tokens is ignored. That covers the line breaking of
+  short lists, line endings and the trailing newline.
+- A list of the exact form `(version T)`, `(generator T)` or
+  `(generator_version T)`, with one atom or string `T`, is ignored on either
+  side when it is a direct child of a list whose head is the bare atom
+  `footprint`. The board header and the same lists anywhere else are kept.
+- Anything else is a difference: a changed, added, removed or reordered
+  token, a missing uuid. Text that does not tokenize (an unterminated string,
+  unbalanced parentheses, a truncated file, two atoms or strings with no
+  whitespace between them, bytes that are not UTF-8) is never a match.
+
+It is used only when KiCad reports a version on the allow-list
+`CANONICAL_MATCH_VERSIONS` (exact `KiCad.get_version()` string; today only
+`10.0.7`). On any other version, or if KiCad does not report one, only byte
+equality can give `false`, as before. A version is added only after it has
+been measured the way the subsection below records.
+
+The comparison does not change the #15 rule. Both sides are still read fresh
+by openkonnect in the same call, and no recorded value can produce `false`.
+It also does not change the window above: an edit and an exact undo leave the
+same tokens as no edit, under byte equality too. In `save_before_external_write`
+the comparison after a save uses only the file bytes whose hash the result
+reports as `sha256`; a file written again in between is not compared, and
+`editor_matches_file` is `false`.
+
+**Where `false` applies.** A canonical match gives `dirty: false` in every
+caller of the dirty check, not only inside `run_kct_handoff`: a
+`save_before_external_write` on a board just saved from KiCad leaves it
+alone, and a plain `sync_from_disk` after a save from KiCad (with the file
+unchanged since) reloads without `discard_unsaved`. That is the same
+guarantee byte equality gives: the editor, read now, holds nothing the file,
+read now, lacks.
+
+**Wire fields.** `save_before_external_write` keeps `editor_matches_file`
+(now meaning "equal by the rule above") and adds `match_basis`: `"bytes"`,
+`"canonical"` or `null` when they do not match. A clean `state_before`
+record carries `match_basis` too. `run_kct_handoff` copies both into its step
+2 record.
+
+**Cost.** Measured on an Apple M5 Max with Python 3 (2026-10-28): about
+0.1 s per MB of board text, linear (1 MB in 0.10 s, 5 MB in 0.57 s, 20 MB in
+2.0 s, 50 MB in 4.9 s, both sides together). It runs only when the two sides
+are not byte-identical. There is no size cap: a board large enough to push a
+call past its C-4 bound fails with `timeout`, never with `false`. Raise
+`OPENKONNECT_TIMEOUT` for such boards.
 
 `session_status` stays cheap. It does not transfer the whole board, so it
 reports `unknown`/`none` for every document on KiCad 10.
@@ -161,7 +220,9 @@ What this means on KiCad 10:
   in either case and discards that edit; it never reports the edit first.
   `run_kct_handoff` does not need `discard_unsaved` for a clean run when it
   can take its own snapshot (see "The snapshot rule"). On KiCad 10.0.7 it
-  cannot, so it needs `discard_unsaved` too (see the next subsection).
+  takes one through the strict token comparison. On a version not on the
+  allow-list it cannot, so it needs `discard_unsaved` too (see the next
+  subsection).
 - **Verification.** After a reload, openkonnect reads the editor back. If its
   text equals the file, `verified` is `true`. A file written by another tool
   is usually formatted differently from KiCad's own output, so `verified` is
@@ -178,11 +239,13 @@ point that was measured on a running KiCad is in the next subsection.
 
 **No, not on KiCad 10.0.7.** Even right after KiCad saves the board, the text
 from `SaveDocumentToString` (`Board.get_as_string()`) is not byte-identical to
-the file that save wrote. So on 10.0.7 `save_before_external_write` reports
-`editor_matches_file: false`, `run_kct_handoff` never takes a snapshot, the
-snapshot rule is never reached, and a handoff reload always needs
-`discard_unsaved`. For the same reason, content comparison never gives `dirty:
-false`. It gives `true` or `unknown`. Follow-up: issue #37.
+the file that save wrote. The two differ only in the two ways described
+below, and both are removed by the strict token comparison (issue #37), so on
+10.0.7 `save_before_external_write` reports `editor_matches_file: true` with
+`match_basis: "canonical"`, `run_kct_handoff` takes its snapshot, and content
+comparison can give `dirty: false`. On any other KiCad version, which is not
+measured, byte equality alone applies, and there a KiCad save would again
+give `editor_matches_file: false` and no snapshot.
 
 Measured on 2026-10-28 (issue #23), black box only (kicad-python and the
 bytes on disk; no KiCad source was read):
@@ -208,9 +271,8 @@ bytes on disk; no KiCad source was read):
 | 5 | Move it back, then save | Not equal | The file was byte-identical to case 2's file, and the text to case 2's text. Nothing drifts over a round trip |
 | 6 | A board saved by an older KiCad | Not tested | No older-KiCad board is available: only KiCad 10.0.7 is installed, and the repo's only boards are the two fixtures |
 
-Only `board.kicad_pcb` was measured. `tests/fixtures/selection.kicad_pcb` was
-not tested in this run because it was not the open board. Its rows would
-answer the same question for a second board.
+Only `board.kicad_pcb` was measured in #23. `selection.kicad_pcb` was
+measured in #37 (next part).
 
 **How the bytes differ (cases 2 to 5).** The text is 14 bytes longer than the
 saved file, with 178 lines to the file's 188. Things that match:
@@ -252,9 +314,38 @@ Two things differ, and they appear wherever the construct appears:
 Normalizing only line endings or the trailing newline would change nothing,
 since those already match. Two steps together make the two equal for this
 board: drop the three header lines that follow each `(footprint "…"` line,
-then compare with all whitespace removed. Either step alone does not. This is
-an observation, not a rule openkonnect uses. Issue #37 is the follow-up on
-how openkonnect should compare.
+then compare with all whitespace removed. Either step alone does not.
+Removing *all* whitespace would also merge `"A B"` into `"AB"`, so the rule
+openkonnect uses is the token comparison above, not this recipe.
+
+**Measured again with the token comparison (issue #37, 2026-10-28).** Same
+KiCad 10.0.7, kicad-python 0.8.0, macOS. Each fixture was copied to a scratch
+directory and the copy opened, so KiCad's saves never wrote a tracked file. A
+throwaway script (not committed) read `get_as_string()` and the file's bytes
+and ran `same_document` on them:
+
+| Case | `board.kicad_pcb` | `selection.kicad_pcb` |
+|---|---|---|
+| As opened (written by `openkonnect-fixture`) | file 1845 B, text 3632 B: bytes no, tokens no | file 3549 B, text 6197 B: bytes no, tokens no |
+| After `Board.save()` | file 3618 B: bytes no, **tokens equal** (660 = 660) | file 6137 B: bytes no, **tokens equal** (1109 = 1109) |
+| Second read, no change | bytes no, tokens equal | bytes no, tokens equal |
+| R1 moved 1 mm, not saved | bytes no, **tokens not equal** | bytes no, **tokens not equal** |
+| R1 moved back, not saved | bytes no, tokens equal | bytes no, tokens equal |
+| After `Board.revert()` | bytes no, tokens equal | bytes no, tokens equal |
+
+Before the ignore list, the editor text had 672 and 1145 tokens: 12 and 36
+more, which is four tokens for each of the three header lists in each of the
+1 and 3 footprints. Through openkonnect, on each copy: `board_dirty_state`
+gave `false` (`match_basis: "canonical"`) after the save and after the
+revert, and `unknown` after the unsaved move, and `save_before_external_write`
+without `allow_save` left the saved board alone and refused the moved one
+with `dirty_state_unknown`. A live `run_kct_handoff` of `kct route` on
+`tests/fixtures/selection.kicad_pcb` saved at step 2 (`match_basis:
+"canonical"`), changed the file at step 3, and reloaded at step 6 with
+`snapshot_matched: true` and `discarded_unsaved: false`. Afterwards the
+fixture was restored and its `git hash-object` (`a206aaea…`) checked
+unchanged. `kct route` leaves `board.kicad_pcb` unchanged (it is fully
+routed), so the live handoff test uses `selection.kicad_pcb`.
 
 **Also observed: fresh uuids at load.** The fixture's footprint has no uuid
 on its `Datasheet` and `Description` properties. Each time KiCad loaded the
@@ -322,6 +413,6 @@ API), `ipc_unreachable`, `kicad_busy`, `timeout`, `instance_changed` and
   `tests/test_save_before_external_write.py`, `tests/test_sync_from_disk.py`,
   `tests/test_run_kct_handoff.py`.
 - End to end, `live_kicad` marker: `tests/live/test_live_handoff.py` wraps a
-  real `kct route` around `tests/fixtures/board.kicad_pcb` open in KiCad 10,
+  real `kct route` around `tests/fixtures/selection.kicad_pcb` open in KiCad 10,
   then restores the fixture. It skips when KiCad is not reachable. Run it with
   `uv run pytest --live -m live_kicad -rs`.

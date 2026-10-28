@@ -260,3 +260,120 @@ def test_connection_errors_fail_fast(tmp_path, code):
     assert r["ok"] is False
     assert r["error"]["code"] == code
     assert "save_board" not in fake.calls
+
+
+# -- KiCad 10.0.7's save form: equal by the strict token comparison (issue #37) ------
+
+# The editor text repeats the header inside each footprint and writes short lists on
+# one line; KiCad's save drops those header lines and breaks the lists (issue #23).
+KICAD_EDITOR = (
+    '(kicad_pcb (version 20260206) (generator "pcbnew")\n'
+    '\t(footprint "f" (version 20260206) (generator "pcbnew") (generator_version "10.0")\n'
+    "\t\t(at 110 60) (font (size 1 1) (thickness 0.15))))\n"
+)
+KICAD_EDITED = KICAD_EDITOR.replace("(at 110 60)", "(at 111 60)")
+
+
+def kicad_save_form(text: str) -> str:
+    """How KiCad 10.0.7's save writes the editor ``text`` (shape of the #23 record)."""
+    return text.replace(
+        ' (version 20260206) (generator "pcbnew") (generator_version "10.0")', ""
+    ).replace(
+        " (font (size 1 1) (thickness 0.15))",
+        "\n\t\t(font\n\t\t\t(size 1 1)\n\t\t\t(thickness 0.15)\n\t\t)",
+    )
+
+
+class KicadSaveFake(SyncFake):
+    """A fake editor whose save writes KiCad 10.0.7's file form, not the editor text."""
+
+    def save_board(self, ref) -> None:
+        self.calls.append("save_board")
+        Path(ref.path).write_text(kicad_save_form(self.editor))
+
+
+def test_kicad_save_form_is_canonically_equal_but_not_byte_equal():
+    from openkonnect.kicad_text import same_document
+
+    saved = kicad_save_form(KICAD_EDITOR)
+    assert saved != KICAD_EDITOR
+    assert same_document(KICAD_EDITOR, saved.encode())
+    assert not same_document(KICAD_EDITED, saved.encode())
+
+
+def test_saved_board_matches_canonically_on_the_measured_version(tmp_path):
+    ref = board_on_disk(tmp_path)  # written by another tool: unknown before the save
+    fake = KicadSaveFake(ref, KICAD_EDITOR)
+    r = save(make_session(fake), allow_save=True)
+    assert r["ok"] is True, r
+    (doc,) = r["documents"]
+    assert doc["action"] == "saved"
+    assert doc["editor_matches_file"] is True
+    assert doc["match_basis"] == "canonical"
+    assert doc["editor_sha256"] == sha(KICAD_EDITOR)
+    assert doc["sha256"] == sha(kicad_save_form(KICAD_EDITOR)) != doc["editor_sha256"]
+
+
+def test_byte_match_reports_match_basis_bytes(tmp_path):
+    ref = board_on_disk(tmp_path)
+    r = save(make_session(SyncFake(ref, EDITED_TEXT)), allow_save=True)
+    assert r["documents"][0]["match_basis"] == "bytes"
+    r = save(make_session(SyncFake(ref)))
+    assert r["documents"][0]["action"] == "none"
+    assert r["documents"][0]["match_basis"] == "bytes"
+    assert r["documents"][0]["state_before"]["match_basis"] == "bytes"
+
+
+def test_board_saved_by_kicad_is_clean_on_the_measured_version(tmp_path):
+    ref = board_on_disk(tmp_path, kicad_save_form(KICAD_EDITOR))
+    fake = KicadSaveFake(ref, KICAD_EDITOR)
+    r = save(make_session(fake))
+    assert r["ok"] is True, r
+    (doc,) = r["documents"]
+    assert doc["state_before"]["dirty"] is False
+    assert doc["state_before"]["match_basis"] == "canonical"
+    assert doc["action"] == "none"
+    assert doc["match_basis"] == "canonical"
+    assert "save_board" not in fake.calls
+
+
+@pytest.mark.parametrize(
+    "version", ["10.0.6", "10.0.8", "11.0.0", ApiError("no", code=ApiStatusCode.AS_UNIMPLEMENTED)]
+)
+def test_unlisted_kicad_version_keeps_byte_equality(tmp_path, version):
+    ref = board_on_disk(tmp_path, kicad_save_form(KICAD_EDITOR))
+    fake = KicadSaveFake(ref, KICAD_EDITOR, kicad_version=version)
+    r = save(make_session(fake))
+    assert r["ok"] is False, r
+    assert r["error"]["code"] == "dirty_state_unknown"
+    assert "save_board" not in fake.calls
+    r = save(make_session(fake), allow_save=True)
+    assert r["ok"] is True, r
+    (doc,) = r["documents"]
+    assert doc["editor_matches_file"] is False
+    assert doc["match_basis"] is None
+
+
+def test_edited_editor_is_not_clean_on_the_measured_version(tmp_path):
+    ref = board_on_disk(tmp_path, kicad_save_form(KICAD_EDITOR))
+    r = save(make_session(KicadSaveFake(ref, KICAD_EDITED)))
+    assert r["ok"] is False
+    assert r["error"]["code"] == "dirty_state_unknown"
+
+
+def test_file_rewritten_after_the_save_check_is_not_matched(tmp_path, monkeypatch):
+    # The match must be against the bytes whose hash the result reports as sha256.
+    ref = board_on_disk(tmp_path)
+    fake = KicadSaveFake(ref, KICAD_EDITOR)
+    real = save_mod.read_board_text
+
+    def read_then_third_party_writes(session, r):
+        text = real(session, r)
+        Path(r.path).write_text(kicad_save_form(KICAD_EDITOR) + "\n")  # same tokens, new bytes
+        return text
+
+    monkeypatch.setattr(save_mod, "read_board_text", read_then_third_party_writes)
+    r = save(make_session(fake), allow_save=True)
+    assert r["ok"] is True, r
+    assert r["documents"][0]["editor_matches_file"] is False
+    assert r["documents"][0]["match_basis"] is None

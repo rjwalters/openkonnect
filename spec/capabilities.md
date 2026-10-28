@@ -343,10 +343,14 @@ control, and grouping edits into transactions. Every entry here is live-editor.
 - **Behaviour:**
   - If the editor is dirty or `unknown` and `discard_unsaved` is not set,
     refuse and change nothing. The editor is clean only when its content,
-    read during this call, is byte-identical to the file, also read during
-    this call. A caller-supplied hash (`editor_hash`, the editor content hash
-    from SES-04, or `expected_hash`) can only show the editor changed or leave
-    the state `unknown`; it never proves the editor clean.
+    read during this call, equals the file, also read during this call:
+    byte-identical, or, on a KiCad version where the serializer difference
+    was measured (10.0.7 only), equal by the strict token comparison in
+    `docs/handoff-protocol.md` (only whitespace between tokens and the
+    `version`/`generator`/`generator_version` lists directly inside a
+    footprint are ignored). A caller-supplied hash (`editor_hash`, the editor
+    content hash from SES-04, or `expected_hash`) can only show the editor
+    changed or leave the state `unknown`; it never proves the editor clean.
   - Inside [SES-06](#ses-06-run_kct_handoff-and-the-handoff-protocol) only, an
     `unknown` editor may be reloaded without `discard_unsaved` when its
     content, read during this call, hashes to the snapshot the handoff took of
@@ -388,11 +392,11 @@ control, and grouping edits into transactions. Every entry here is live-editor.
      changed.
   5. If the file did not change, skip the reload.
   6. Otherwise, run [SES-05](#ses-05-sync_from_disk) with the hash and the
-     snapshot rule: at step 2 the tool records the hash of the exact content
-     it saved (or proved byte-identical to the file); after the command, it
-     reloads without `discard_unsaved` only if a fresh read of the editor
-     hashes to that snapshot. An editor that changed meanwhile is refused
-     with `document_dirty`. Without a snapshot the reload is refused as
+     snapshot rule: at step 2 the tool records the hash of the exact editor
+     content it saved (or proved equal to the file by the SES-05 rule); after
+     the command, it reloads without `discard_unsaved` only if a fresh read of
+     the editor hashes to that snapshot. An editor that changed meanwhile is
+     refused with `document_dirty`. Without a snapshot the reload is refused as
      `unknown`. `discard_unsaved` overrides both. One window remains: a human
      save plus an exact undo during step 3 matches the snapshot, so the reload
      loads the human's saved file (which replaced the command's output).

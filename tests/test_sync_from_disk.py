@@ -369,3 +369,52 @@ def test_snapshot_never_relaxes_a_changed_editor(tmp_path):
     assert r["ok"] is False, r
     assert r["error"]["code"] == "document_dirty"
     assert "revert_board" not in fake.calls
+
+
+# -- the canonical match (issue #37) ------------------------------------------------
+
+
+def test_board_dirty_state_canonical_match_is_false_only_on_the_measured_version(tmp_path):
+    from .test_save_before_external_write import KICAD_EDITOR, kicad_save_form
+
+    ref = board_on_disk(tmp_path, kicad_save_form(KICAD_EDITOR))
+    ds = dirty_state(SyncFake(ref, KICAD_EDITOR), ref)
+    assert ds.dirty is False
+    assert ds.match_basis == "canonical"
+    assert ds.record()["match_basis"] == "canonical"
+    for version in ("10.0.6", "10.0.8", "11.0.0"):
+        ds = dirty_state(SyncFake(ref, KICAD_EDITOR, kicad_version=version), ref)
+        assert ds.dirty == "unknown", version
+        assert ds.match_basis is None
+
+
+@pytest.mark.parametrize("baseline", [None, "garbage", sha(KCT_TEXT)])
+def test_board_dirty_state_canonical_difference_is_never_false(tmp_path, baseline):
+    from .test_save_before_external_write import KICAD_EDITED, KICAD_EDITOR, kicad_save_form
+
+    ref = board_on_disk(tmp_path, kicad_save_form(KICAD_EDITOR))
+    ds = dirty_state(SyncFake(ref, KICAD_EDITED), ref, editor_baseline_sha256=baseline)
+    assert ds.dirty is not False
+
+
+def test_caller_hash_still_never_gives_false_on_the_measured_version(tmp_path):
+    # Editor equals a caller hash of itself, file differs by more than the ignore list.
+    from .test_save_before_external_write import KICAD_EDITED, KICAD_EDITOR, kicad_save_form
+
+    ref = board_on_disk(tmp_path, kicad_save_form(KICAD_EDITOR))
+    ds = dirty_state(SyncFake(ref, KICAD_EDITED), ref, editor_baseline_sha256=sha(KICAD_EDITED))
+    assert ds.dirty == "unknown"
+
+
+def test_public_sync_after_a_kicad_save_reloads_without_discard(tmp_path):
+    # Curator question 3: a canonical match gives dirty false in every caller, so a
+    # plain sync_from_disk after the user saved from KiCad reloads (here the file is
+    # the KiCad save itself, unchanged).
+    from .test_save_before_external_write import KICAD_EDITOR, kicad_save_form
+
+    ref = board_on_disk(tmp_path, kicad_save_form(KICAD_EDITOR))
+    fake = SyncFake(ref, KICAD_EDITOR)
+    r = sync(make_session(fake))
+    assert r["ok"] is True, r
+    assert r["documents"][0]["state_before"]["dirty"] is False
+    assert r["documents"][0]["discarded_unsaved"] is False
