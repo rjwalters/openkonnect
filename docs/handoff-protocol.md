@@ -309,6 +309,7 @@ A failure names the step in `failed_step` and keeps the step records so far.
 | `stale_input` | The file's hash is not the expected one | Something else wrote the file. Inspect it before syncing |
 | `not_found` | The board file is missing | Restore it. The editor is untouched |
 | `reload_failed` | KiCad rejected the file (for example it does not parse). `editor_state: "previous"` means the editor still holds its earlier state | Fix or restore the file, then sync again |
+| `no_document` with `details.saved: false` | The open board has never been saved, so it has no file to save, sync or hand off | Save it in KiCad with File > Save As, then call the tool again |
 
 Every tool also fails fast with the shared connection errors (SES-07):
 `kicad_not_running`, `ipc_disabled` (naming the preference that enables the

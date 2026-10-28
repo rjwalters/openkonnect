@@ -146,7 +146,7 @@ not yet emitted.
 | `kicad_busy` | KiCad answered "busy" after the bounded retries |
 | `timeout` | No answer in time |
 | `instance_changed` | KiCad restarted, or another instance answered |
-| `no_document` | The needed board or schematic is not open |
+| `no_document` | The needed board or schematic is not open, or the board is open but has never been saved, so it has no file (`details.saved: false`) |
 | `document_dirty` | Refused to protect unsaved editor changes |
 | `dirty_state_unknown` | Refused because unsaved changes could not be ruled out |
 | `unsupported_on_this_kicad` | The documented API lacks the feature on this version; carries the minimum version when known |
@@ -156,6 +156,13 @@ not yet emitted.
 | `reload_failed` | KiCad rejected the file on reload (for example it does not parse), so the board was not reloaded; `details.editor_state` says whether the editor still holds its previous state ([SES-05](#ses-05-sync_from_disk)) |
 | `kicad_tools_failed` | A delegated kicad-tools command failed, could not be started, or is absent |
 | `internal_error` | An unexpected failure inside openkonnect, or a KiCad reply it cannot map to another code; returned as data, never as a raw exception |
+
+A board that has never been saved is reported as `no_document` rather than
+under a code of its own. The agent's remedy is the same kind of action (put a
+document that has a file in front of KiCad; here, save the board with
+File > Save As), and `details.saved: false` tells the two cases apart. A new
+code would change the `ErrorCode` set and the wire contract for no gain. A
+plain "not open" `no_document` carries `details.kind` and no `saved` field.
 
 Reserved, not yet emitted:
 
@@ -219,13 +226,29 @@ control, and grouping edits into transactions. Every entry here is live-editor.
   - `kicad_running` and `ipc_reachable`, as separate fields;
   - the KiCad version and API version;
   - the instance identity;
-  - the project directory;
-  - a list of documents. Each has `kind` (board or schematic), `path`, `open`
-    (true/false/unknown), `dirty` (true/false/unknown) and `dirty_basis`.
+  - the project directory, or null when no board is open or the board has
+    never been saved;
+  - a list of documents. Each has `kind` (board or schematic), `path`,
+    `path_basis`, `open` (true/false/unknown), `dirty` (true/false/unknown)
+    and `dirty_basis`. `path_basis` says where `path` came from:
+    - `kicad_ipc`: the board path KiCad reports;
+    - `inferred_from_project`: the schematic path, derived from the project
+      directory and name because KiCad 10 does not serve the schematic. The
+      record also has `exists_on_disk`;
+    - `unsaved`: a board KiCad reports with no file name and no project, so
+      it is new and has never been saved. `path` is `null`, and a `path_note`
+      says why. This is the only case where `path` is `null`.
+
     `dirty_basis` says how dirty was decided: KiCad's own flag (KiCad 11+),
     a documented content comparison against the saved file, or `none`;
   - a table of capability flags saying which tools in this spec the instance
-    supports, with the reason for each one it does not.
+    supports, with the reason for each one it does not. For a board that has
+    never been saved, the tools that need the board's file
+    ([SES-04](#ses-04-save_before_external_write),
+    [SES-05](#ses-05-sync_from_disk),
+    [SES-06](#ses-06-run_kct_handoff-and-the-handoff-protocol)) are marked
+    `supported: false` with `error_code: "no_document"`, and no schematic is
+    listed.
 - **KiCad 10 notes:**
   - There is no documented dirty query on KiCad 10. If the implementer cannot
     decide dirty state reliably from documented signals, it is reported as
@@ -233,6 +256,11 @@ control, and grouping edits into transactions. Every entry here is live-editor.
   - The schematic is not served on KiCad 10. Its path may be reported as
     *inferred* from the project, with `open` and `dirty` set to `unknown`.
   - Every tool that protects unsaved work treats `unknown` as dirty.
+  - A PCB Editor started with no file reports an empty board file name, an
+    empty project path and an empty project name. This is a steady state, not
+    a startup race: KiCad keeps answering this way until the board is saved,
+    so the board is listed with `path_basis: "unsaved"` rather than retried
+    (black-box, KiCad 10.0.7 on macOS, #34).
 - **Failure modes:** this tool reports "not running" or "IPC disabled" as
   *data*, not as an error, so that it can always answer. It returns `kicad_busy`
   or `timeout` after bounded retries. It returns `instance_changed` if the
