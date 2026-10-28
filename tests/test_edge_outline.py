@@ -9,6 +9,8 @@ returns stroke-inflated boxes, so a return to the old union fails here.
 from __future__ import annotations
 
 import math
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -29,6 +31,7 @@ from kipy.proto.common.types import KiCadObjectType
 from openkonnect.backend import _bezier_extent, _edge_outline
 from openkonnect.errors import ErrorCode, OpenKonnectError
 from openkonnect.tools.board_summary import board_summary
+from openkonnect.tools.common import frame_offset
 from openkonnect.tools.show_findings import show_findings
 
 from .conftest import CANNED_BOARD, EditorFake, FakeBackend, board_ref, make_session
@@ -115,10 +118,18 @@ def _inflated(shape: Any) -> Box2:
 
 
 class Board:
-    """The two kipy ``Board`` calls ``_edge_outline`` may use."""
+    """The kipy ``Board`` calls ``_edge_outline`` may use.
 
-    def __init__(self, *shapes: Any) -> None:
+    ``shapes`` are board-level; ``footprints`` carry footprint-owned shapes.
+    As measured on KiCad 10.0.7 (#41, docs/ipc-client.md), footprint children
+    are not in board-level ``get_items([KOT_PCB_SHAPE])``: they are reachable
+    only through ``get_footprints()[i].definition.shapes``, at absolute
+    coordinates, with ``parent`` set to the footprint's id.
+    """
+
+    def __init__(self, *shapes: Any, footprints: list[Any] | None = None) -> None:
         self.shapes = list(shapes)
+        self.footprints = list(footprints or [])
         self.requested: list[Any] = []
 
     def get_items(self, types: Any) -> list[Any]:
@@ -128,8 +139,20 @@ class Board:
     def get_item_bounding_box(self, items: Any) -> list[Box2]:
         return [_inflated(s) for s in items]
 
-    def get_shapes(self) -> list[Any]:  # kipy drops unclassified shapes here
-        return [s for s in self.shapes if type(s) is not BoardShape]
+    def get_shapes(self) -> list[Any]:  # kipy 0.8.0 keeps unclassified shapes too
+        return list(self.shapes)
+
+    def get_footprints(self) -> list[Any]:
+        return list(self.footprints)
+
+
+def footprint(fp_id: str, *shapes: Any) -> SimpleNamespace:
+    """A footprint whose ``definition.shapes`` hold its graphics, parented to it."""
+    for s in shapes:
+        s._proto.parent.value = fp_id
+    return SimpleNamespace(
+        id=SimpleNamespace(value=fp_id), definition=SimpleNamespace(shapes=list(shapes))
+    )
 
 
 def box(x0: float, y0: float, x1: float, y1: float) -> dict[str, int]:
@@ -281,6 +304,66 @@ def test_unknown_geometry_on_another_layer_is_ignored():
     )
 
 
+# -- footprint-owned Edge.Cuts graphics (#41) ----------------------------------------
+
+FP_EDGE_BOARD = Path(__file__).resolve().parent / "fixtures" / "fp_edge.kicad_pcb"
+
+
+def _fp_edge_board(*board_shapes: Any) -> Board:
+    """``tests/fixtures/fp_edge.kicad_pcb`` as KiCad 10.0.7 reports it.
+
+    R1's Edge.Cuts line at absolute 95,45-98,45 mm lies above-left of the
+    board-level 100,50-130,70 rectangle, and is not in ``get_items``.
+    """
+    r1 = footprint("6f1d1a3e-0001-4000-8000-000000000001", seg(95, 45, 98, 45))
+    return Board(*board_shapes, footprints=[r1])
+
+
+def test_footprint_edge_cuts_graphic_does_not_move_the_outline():
+    edge, got = _edge_outline(_fp_edge_board(rect(100, 50, 130, 70)))
+    assert got == box(100, 50, 130, 70)
+    assert len(edge) == 1
+
+
+def test_only_footprint_edge_cuts_graphics_is_no_outline():
+    edge, got = _edge_outline(_fp_edge_board())
+    assert edge == [] and got is None
+
+
+def test_only_footprint_edge_cuts_graphics_gives_no_frame_offset():
+    def data(_ref):
+        edge, o = _edge_outline(_fp_edge_board())
+        return dict(CANNED_BOARD, edge_cuts_shapes=len(edge), outline_nm=o)
+
+    backend = FakeBackend(open_boards=[[board_ref()]], board_data=data)
+    r = make_session(backend).run_tool(board_summary)
+    assert r["ok"] is True, r
+    assert r["outline"]["present"] is False
+    assert frame_offset(_edge_outline(_fp_edge_board())[1])["present"] is False
+
+
+def test_board_summary_on_the_fp_edge_board_matches_kct_origin():
+    def data(_ref):
+        edge, o = _edge_outline(_fp_edge_board(rect(100, 50, 130, 70)))
+        return dict(CANNED_BOARD, edge_cuts_shapes=len(edge), outline_nm=o)
+
+    backend = FakeBackend(open_boards=[[board_ref()]], board_data=data)
+    r = make_session(backend).run_tool(board_summary)
+    assert r["ok"] is True, r
+    o = r["outline"]
+    assert o["origin_mm"] == {"x": 100.0, "y": 50.0}
+    assert (o["width_mm"], o["height_mm"]) == (30.0, 20.0)
+    assert "footprint Edge.Cuts graphics excluded" in o["basis"]
+
+
+def test_kct_board_origin_ignores_footprint_edge_cuts_graphics():
+    """Pins kicad-tools' side: if upstream starts counting footprint Edge.Cuts
+    graphics, the frames would disagree and this fails (kicad-tools-main CI)."""
+    from kicad_tools.schema.pcb import PCB
+
+    assert PCB.load(str(FP_EDGE_BOARD)).board_origin == (100.0, 50.0)
+
+
 # -- through the tools -------------------------------------------------------------
 
 
@@ -334,3 +417,4 @@ def test_board_frame_point_lands_on_the_file_frame_pad():
     offset = r["selection"]["frame_offset"]
     assert (offset["x_mm"], offset["y_mm"]) == (100.0, 50.0)
     assert "stroke" in offset["basis"]
+    assert "footprint Edge.Cuts graphics excluded" in offset["basis"]

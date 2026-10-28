@@ -37,7 +37,7 @@ def board_summary(session: Session) -> dict[str, Any]:
     if box is None:
         outline: dict[str, Any] = {
             "present": False,
-            "reason": "No shapes on Edge.Cuts.",
+            "reason": "No board-level shapes on Edge.Cuts.",
         }
     else:
         outline = {
@@ -46,7 +46,10 @@ def board_summary(session: Session) -> dict[str, Any]:
             "height_mm": _mm(box["y1_nm"] - box["y0_nm"]),
             "frame": "file",
             "origin_mm": {"x": _mm(box["x0_nm"]), "y": _mm(box["y0_nm"])},
-            "basis": "bounding box of Edge.Cuts shape geometry, excluding stroke width",
+            "basis": (
+                "bounding box of board-level Edge.Cuts shape geometry, excluding"
+                " stroke width; footprint Edge.Cuts graphics excluded"
+            ),
         }
 
     doc = board_document(ref)
