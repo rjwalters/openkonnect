@@ -161,6 +161,17 @@ class KipyBackend:
             project_dir = doc.project.path or None
             project_name = doc.project.name or None
             file_name = doc.board_filename
+            if not file_name.endswith(".kicad_pcb"):
+                # For a few hundred ms after the PCB Editor starts, KiCad 10.0.7
+                # lists the board with an empty board_filename but a populated
+                # project path (#34; docs/ipc-client.md, "Startup window").
+                # Joining them would give the project directory as the board
+                # path. Treat it as "not ready" so Session.call retries it and
+                # ends in a retryable kicad_busy if it never clears.
+                raise ApiError(
+                    f"board document not fully loaded (board_filename={file_name!r})",
+                    code=ApiStatusCode.AS_NOT_READY,
+                )
             path = file_name
             if project_dir and not os.path.isabs(file_name):
                 path = os.path.join(project_dir, file_name)
