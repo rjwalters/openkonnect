@@ -2,7 +2,7 @@
 
 Never runs in CI. Setup: start KiCad 10 with 'Enable KiCad API' on, and open
 ``tests/fixtures/selection.kicad_pcb`` (unmodified) in the PCB editor. Then
-run ``uv run pytest -m live_kicad -rs``. Without a reachable KiCad, the
+run ``uv run pytest --live -m live_kicad -rs``. Without a reachable KiCad, the
 fixture open, or ``kct``, this skips.
 
 The test sets the starting selection itself, through the backend (there is no

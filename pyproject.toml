@@ -40,7 +40,7 @@ packages = ["src/openkonnect"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "live_kicad: needs a running KiCad 10 with its API server on and the fixture board open; skipped when KiCad is not reachable",
+    "live_kicad: needs a running KiCad 10 with its API server on and the fixture board open; skipped unless pytest is given --live, and when KiCad is not reachable",
 ]
 
 [tool.ruff]

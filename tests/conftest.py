@@ -1,8 +1,16 @@
-"""Shared fixtures: a fake IPC backend and the ``live_kicad`` marker.
+"""Shared fixtures: a fake IPC backend and the ``live_kicad`` opt-in.
 
 The fake stands in for :class:`openkonnect.backend.KipyBackend` and raises the
 real ``kipy`` exception types with real ``ApiStatusCode`` values, so the
 session layer's error mapping is exercised as it would be against KiCad.
+
+Tests marked ``live_kicad`` drive the open KiCad editor (they save, reload and
+change its selection), so they never run by accident: without ``--live`` every
+one is skipped at collection, before any fixture runs, whatever ``-m``
+expression or node id is given. ``uv run pytest -rs`` runs every other test and
+lists the live ones as skipped. The live command is
+``uv run pytest --live -m live_kicad -rs``; with ``--live`` the tests still
+skip on their own when KiCad is not reachable or the wrong board is open.
 """
 
 from __future__ import annotations
@@ -21,7 +29,28 @@ from kipy.proto.common import ApiStatusCode
 from openkonnect.backend import BoardRef
 from openkonnect.session import Session, SessionConfig
 
+pytest_plugins = ["pytester"]
+
 SOCKET = "ipc:///tmp/kicad/api.sock"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--live",
+        action="store_true",
+        default=False,
+        help="run the live_kicad tests, which drive the open KiCad editor",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip every ``live_kicad`` test unless ``--live`` is given (#40)."""
+    if config.getoption("--live"):
+        return
+    skip = pytest.mark.skip(reason="live_kicad: pass --live to run (drives the open KiCad editor)")
+    for item in items:
+        if item.get_closest_marker("live_kicad") is not None:
+            item.add_marker(skip)
 
 
 def busy() -> ApiError:
@@ -172,7 +201,8 @@ def remove_kct_artifacts(board: Path) -> None:
 def live_session() -> Session:
     """A real session. Skips unless KiCad 10 is reachable with a board open.
 
-    Used only by ``live_kicad`` tests, which never run in CI (no KiCad there).
+    Used only by ``live_kicad`` tests, which run only with ``--live`` and never
+    in CI (no KiCad there).
     """
     from openkonnect.tools.session_status import session_status
 

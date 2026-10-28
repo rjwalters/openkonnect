@@ -2,7 +2,7 @@
 
 Never runs in CI. Setup: start KiCad 10 with 'Enable KiCad API' on, and open
 ``tests/fixtures/board.kicad_pcb`` in the PCB editor. Then run
-``uv run pytest -m live_kicad -rs``. Without a reachable KiCad this skips.
+``uv run pytest --live -m live_kicad -rs``. Without a reachable KiCad this skips.
 
 On KiCad 10.0.7 the editor text never byte-matches KiCad's own save, so the
 board's dirty state is never ``false`` (measured in issue #23; see "Is the

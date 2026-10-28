@@ -323,4 +323,4 @@ API), `ipc_unreachable`, `kicad_busy`, `timeout`, `instance_changed` and
 - End to end, `live_kicad` marker: `tests/live/test_live_handoff.py` wraps a
   real `kct route` around `tests/fixtures/board.kicad_pcb` open in KiCad 10,
   then restores the fixture. It skips when KiCad is not reachable. Run it with
-  `uv run pytest -m live_kicad -rs`.
+  `uv run pytest --live -m live_kicad -rs`.
