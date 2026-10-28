@@ -529,17 +529,19 @@ control, and grouping edits into transactions. Every entry here is live-editor.
 - **Sources:** P-D4, P-R1.
 
 ### SES-12 `compare_with_disk`
-- **Class:** live-editor · **kicad-tools:** upstream gap (G3, a semantic
-  board-to-board diff) · **KiCad:** 10.0 · **From:** #4, ROADMAP Phase 1
+- **Class:** live-editor · **kicad-tools:** already in kicad-tools (`kct pcb
+  diff`, kicad-tools 0.24.0, kicad-tools #6417; formerly gap G3, now resolved
+  upstream) · **KiCad:** 10.0 · **From:** #4, ROADMAP Phase 1
 - **Purpose:** say whether, and how, the board in the editor differs from the
   saved file.
 - **Inputs:** none, or a list of item kinds to compare.
 - **Outputs:** `differs` (true/false/unknown), and when known a summary by
   kind: footprints moved, added or removed; copper added or removed; zones
   changed. Each with references.
-- **Failure modes:** `no_document`. If no semantic diff is available, the tool
-  reports only `differs` and gives the basis it used.
-- **Sources:** P-R1, P-R2, P-D4.
+- **Failure modes:** `no_document`. If kicad-tools is not installed, or its
+  board diff fails to load either side, the tool reports only `differs` and
+  gives the basis it used.
+- **Sources:** P-R1, P-R2, P-D4, P-T10.
 
 ### SES-13 `select_items`
 - **Class:** live-editor · **kicad-tools:** n/a · **KiCad:** 10.0 ·
@@ -1380,21 +1382,27 @@ Each of these was weighed, and left out of v0 for the reason given.
 
 ## Upstream gaps for kicad-tools
 
-These are file-level capabilities that this spec needs and kicad-tools lacks.
-Under #6, they are filed on rjwalters/kicad-tools and listed in
-`docs/architecture.md`. That work belongs to #6, not to this PR.
+These are file-level capabilities that this spec needs and kicad-tools lacked
+when the spec was written. Under #6, the open ones are filed on
+rjwalters/kicad-tools and listed in `docs/architecture.md`. That work belongs
+to #6, not to this PR. A row marked resolved upstream is kept so that the IDs
+stay stable; it is not to be filed.
 
 | ID | Gap | Needed by |
 |----|-----|-----------|
 | G1 | A stable, versioned finding format shared by the commands that emit findings | SES-09, SES-10 |
 | G2 | A check limited to a region or a set of references | REV-07 |
-| G3 | A semantic diff between two board files | SES-12 |
+| G3 | A semantic diff between two board files. **Resolved upstream:** `kct pcb diff` (kicad-tools 0.24.0, kicad-tools #6417) | SES-12 |
 | G4 | Plot, 3D and alternative fabrication exports | MFG-03 |
 
 An earlier draft listed a fifth gap, a Freerouting runner. That request was
 already filed as rjwalters/kicad-tools#7991, and it was closed as not planned on
 2026-10-27 ([P-T9]). It is not an open gap. #6 should not file it again or list
 it in `docs/architecture.md`. RTE-09 is out of scope as a result.
+
+G3 is not an open gap either. kicad-tools 0.24.0 already has `kct pcb diff`
+(kicad-tools #6417, [P-T10]), which compares two board files item by item and
+can emit JSON. #6 should not file it; SES-12 builds on it.
 
 ## Coverage of #4 and #5
 
@@ -1411,10 +1419,12 @@ it in `docs/architecture.md`. RTE-09 is out of scope as a result.
 
 ## Provenance
 
-All sources were accessed on **2026-10-27**. No black-box runs of Konnect or
-of any other project's binaries were made. The only commands run were
-kicad-tools' own CLI help (`kct`, version 0.24.0), for the "already in
-kicad-tools" column.
+Every source except P-T10 was accessed on **2026-10-27**; P-T10 was accessed
+on **2026-10-28**. No black-box runs of Konnect or of any other project's binaries
+were made. The only commands run were kicad-tools' own CLI help (`kct`,
+version 0.24.0, MIT), for the "already in kicad-tools" column, and on
+2026-10-28 `kct --version` and `kct pcb diff --help`, to confirm G3 resolved
+upstream and fill SES-12's kicad-tools column.
 
 **Attestation.** The author of this spec did not open, clone, search or recall
 the source code of mixelpixx/Konnect, its forks, or any AGPL or closed-source
@@ -1451,6 +1461,7 @@ copied.
 | P-T7 | kicad-tools CLI help, `kct` 0.24.0 (local run of `kct <command> --help`) | https://github.com/rjwalters/kicad-tools (main at `6a844af6d`) | Every "already in kicad-tools" citation |
 | P-T8 | kicad-tools MCP tool registry (names only) | https://github.com/rjwalters/kicad-tools/tree/6a844af6d/src/kicad_tools/mcp/tools | MCP tool names cited in the kicad-tools column |
 | P-T9 | kicad-tools #7991 (Freerouting runner), closed as not planned, with the operator's ruling of 2026-10-27 | https://github.com/rjwalters/kicad-tools/issues/7991 | RTE-09 out of scope, and G5 withdrawn: kct runs no external router, and boards it cannot route become router-gap reports |
+| P-T10 | kicad-tools `kct pcb diff --help` and package metadata, kicad-tools 0.24.0, plus kicad-tools #6417 (accessed 2026-10-28) | https://github.com/rjwalters/kicad-tools/issues/6417 | G3 resolved upstream; SES-12 kicad-tools column |
 
 **Unreachable or not used.**
 - `https://docs.kicad.org/kicad-python/` (2026-10-27) returned a page with no
