@@ -557,10 +557,12 @@ control, and grouping edits into transactions. Every entry here is live-editor.
     between the editor's text and a KiCad save do not matter. SES-12 does not
     depend on that text matching a real KiCad save byte for byte (the open
     question in #23).
-- **Failure modes:** `no_document`. If kicad-tools is not installed, if the
-  snapshot cannot be taken or written, or if the board diff fails to load
-  either side, the tool reports only `differs` (as `unknown` when it could not
-  compare) and gives the basis it used. No other error codes apply.
+- **Failure modes:** `no_document` and the SES-07 errors; `timeout` from the
+  SES-11 capture on very large boards; `invalid_argument` for a malformed list
+  of item kinds. If kicad-tools is not installed, if the snapshot cannot be
+  taken or written, or if the board diff fails to load either side, the tool
+  reports only `differs` (as `unknown` when it could not compare) and gives the
+  basis it used. These snapshot and diff failures add no new error codes.
 - **Sources:** P-R1, P-R2, P-D4, P-T10.
 
 ### SES-13 `select_items`
