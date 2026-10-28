@@ -4,8 +4,10 @@ Never runs in CI. Setup: start KiCad 10 with 'Enable KiCad API' on, and open
 ``tests/fixtures/board.kicad_pcb`` in the PCB editor. Then run
 ``uv run pytest -m live_kicad -rs``. Without a reachable KiCad this skips.
 
-On KiCad 10 the board's dirty state is usually ``unknown``, so the test passes
-``allow_save=True``. Afterwards the fixture file is restored, the
+On KiCad 10.0.7 the editor text never byte-matches KiCad's own save, so the
+board's dirty state is never ``false`` (measured in issue #23; see "Is the
+editor text byte-identical to a KiCad save?" in ``docs/handoff-protocol.md``).
+The test therefore passes ``allow_save=True``. Afterwards the fixture file is restored, the
 ``board.route.json`` record ``kct route`` leaves beside it is removed, and the
 editor is re-synced to the restored file.
 """

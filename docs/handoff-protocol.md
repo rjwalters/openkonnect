@@ -28,7 +28,9 @@ it for you. Any other tool can follow the same steps by hand with
 6. **Reload.** `sync_from_disk` with `expected_hash` (the file's hash after
    step 3) and `editor_hash` (`editor_sha256` from step 2). `run_kct_handoff`
    also applies the **snapshot rule** below, so a clean handoff reloads
-   without `discard_unsaved`. If the user edited the board while the command
+   without `discard_unsaved` when the editor text matches the saved file (on
+   KiCad 10.0.7 it never does, so the reload needs `discard_unsaved`; see "Is
+   the editor text byte-identical to a KiCad save?"). If the user edited the board while the command
    ran, the reload refuses with `document_dirty`, and the result reports both
    the command's outcome and the refusal.
 7. **Report.** One record per step, the command's exit code and JSON output,
@@ -103,7 +105,9 @@ How `content_comparison` decides, from the editor text that kicad-python's
   byte-identical to the file, since then nothing in the editor is missing from
   the file. Any difference gives `unknown`, because it may be unsaved work or
   only a formatting difference between KiCad's serializer and whatever wrote
-  the file.
+  the file. On KiCad 10.0.7 that includes KiCad's own save, so this rule never
+  gives `false` there (measured; see "Is the editor text byte-identical to a
+  KiCad save?").
 - **Against a baseline (`editor_hash`):** the hash of the editor text recorded
   right after a save. Changed since then gives `true`: someone edited the
   board in KiCad after the save. This is what lets step 6 detect an edit made
@@ -155,8 +159,9 @@ What this means on KiCad 10:
   work. Pass `editor_hash` (the `editor_sha256` from the save step) so that an
   edit made since is refused with `document_dirty`. `discard_unsaved` reloads
   in either case and discards that edit; it never reports the edit first.
-  `run_kct_handoff` does not need `discard_unsaved` for a clean run: it uses
-  its own snapshot (see "The snapshot rule").
+  `run_kct_handoff` does not need `discard_unsaved` for a clean run when it
+  can take its own snapshot (see "The snapshot rule"). On KiCad 10.0.7 it
+  cannot, so it needs `discard_unsaved` too (see the next subsection).
 - **Verification.** After a reload, openkonnect reads the editor back. If its
   text equals the file, `verified` is `true`. A file written by another tool
   is usually formatted differently from KiCad's own output, so `verified` is
@@ -166,7 +171,98 @@ What this means on KiCad 10:
   `view_kept` is `"unknown"`.
 
 These were verified against the installed client and the docs, not against a
-running KiCad. The live test below is the check against a real editor.
+running KiCad. The live test below is the check against a real editor. The one
+point that was measured on a running KiCad is in the next subsection.
+
+### Is the editor text byte-identical to a KiCad save?
+
+**No, not on KiCad 10.0.7.** Even right after KiCad saves the board, the text
+from `SaveDocumentToString` (`Board.get_as_string()`) is not byte-identical to
+the file that save wrote. So on 10.0.7 `save_before_external_write` reports
+`editor_matches_file: false`, `run_kct_handoff` never takes a snapshot, the
+snapshot rule is never reached, and a handoff reload always needs
+`discard_unsaved`. For the same reason, content comparison never gives `dirty:
+false`. It gives `true` or `unknown`. Follow-up: issue #37.
+
+Measured on 2026-10-28 (issue #23), black box only (kicad-python and the
+bytes on disk; no KiCad source was read):
+
+- KiCad `10.0.7` (`KiCad.get_version()`), kicad-python 0.8.0, built against
+  API `10.0.6-0-gcaf7377e9c` (`kipy.kicad_api_version`), on macOS, socket
+  `ipc:///tmp/kicad/api.sock`.
+- The board was `tests/fixtures/board.kicad_pcb`, open in the PCB Editor. A
+  throwaway script (not committed) ran the cases below in order. It compared
+  `get_as_string().encode("utf-8")` with the file's bytes, which is how
+  openkonnect compares them. Saves used `Board.save()`, and the edit used
+  `begin_commit` / `update_items` / `push_commit`.
+- Afterwards the fixture was restored with `git checkout`, its `git
+  hash-object` was confirmed unchanged (`4c952bb1…`), and the editor was
+  reverted with `Board.revert()`.
+
+| # | Case | Editor text equals file? | Notes |
+|---|---|---|---|
+| 1 | Fresh open, no save | Not equal (file 1845 B, text 3632 B) | Expected: the fixture was written by `openkonnect-fixture`, not KiCad. KiCad rewrites the header, reorders and adds layers, and adds the full `setup` block |
+| 2 | After a KiCad save, no edit | **Not equal** (file 3618 B, text 3632 B) | The question the handoff depends on. The difference is described below |
+| 3 | Idempotence: two reads, then two more saves with no edit | Not equal, but stable | The two reads gave the same text, and it equalled case 2's text. Both later saves left the file byte-identical to case 2's file. Each save is stable, and so is each read, but the two forms still differ |
+| 4 | Move one footprint by 1 mm, then save | Not equal (file 3618 B, text 3632 B) | Before the save, the editor text differed from the old file and the file was unchanged, so the text tracks unsaved work. After the save, the file differed from case 2's file only in the moved `(at …)`. The text-to-file difference was the same as in case 2 |
+| 5 | Move it back, then save | Not equal | The file was byte-identical to case 2's file, and the text to case 2's text. Nothing drifts over a round trip |
+| 6 | A board saved by an older KiCad | Not tested | No older-KiCad board is available: only KiCad 10.0.7 is installed, and the repo's only boards are the two fixtures |
+
+Only `board.kicad_pcb` was measured. `tests/fixtures/selection.kicad_pcb` was
+not tested in this run because it was not the open board. Its rows would
+answer the same question for a second board.
+
+**How the bytes differ (cases 2 to 5).** The text is 14 bytes longer than the
+saved file, with 178 lines to the file's 188. Things that match:
+
+- Both use LF line endings, tab indentation, and one trailing newline (both
+  end in `\n)\n`).
+- The sections are in the same order, and the uuid sets are identical.
+- No timestamp or uuid changes between reads or between saves.
+
+Two things differ, and they appear wherever the construct appears:
+
+1. **A header inside each footprint.** The text repeats the file header
+   inside every `(footprint …)`. The saved file has no such lines. The first
+   difference is at byte offset 1823, line 85, which is the first footprint.
+   Redacted:
+
+   ```
+   	(footprint "openkonnect:R_Fixture"
+   		(version 20260206)          <- text only
+   		(generator "pcbnew")        <- text only
+   		(generator_version "10.0")  <- text only
+   		(layer "F.Cu")
+   ```
+
+2. **Short lists on one line.** The text writes `font` and `stroke` lists on
+   one line. The saved file breaks them over several lines:
+
+   ```
+   text:  (font (size 1 1) (thickness 0.15))
+   file:  (font
+            (size 1 1)
+            (thickness 0.15)
+          )
+   ```
+
+   The same pattern appears for `(font (size 1.27 1.27))` and
+   `(stroke (width 0.1) (type default))`.
+
+Normalizing only line endings or the trailing newline would change nothing,
+since those already match. Two steps together make the two equal for this
+board: drop the three header lines that follow each `(footprint "…"` line,
+then compare with all whitespace removed. Either step alone does not. This is
+an observation, not a rule openkonnect uses. Issue #37 is the follow-up on
+how openkonnect should compare.
+
+**Also observed: fresh uuids at load.** The fixture's footprint has no uuid
+on its `Datasheet` and `Description` properties. Each time KiCad loaded the
+file (`Board.revert()`), it gave those two properties new random uuids. After
+two reverts, the text differed from case 1 only in those two uuid lines. So
+when a file written by another tool leaves out uuids, even two reads of the
+same unchanged file, with a reload in between, do not give the same text.
+Once KiCad has saved the uuids (cases 2 to 5), they stay fixed.
 
 ## Flags
 
