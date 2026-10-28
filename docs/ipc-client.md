@@ -63,3 +63,35 @@ From KiCad 10.0.7 on macOS, observed without reading KiCad source:
 - KiCad GUI process names are `kicad`, `pcbnew` and `eeschema`.
 - The default socket is `/tmp/kicad/api.sock` (from kicad-python's default and
   KiCad's public docs). When that name is taken, KiCad appends the process ID.
+
+### Startup window
+
+Just after the PCB Editor starts, KiCad answers before the board is fully
+loaded (#34). Observed on KiCad 10.0.7, macOS, 2026-10-28, over 25 launches
+on `board.kicad_pcb` (in the fixture directory with its project files, and as
+a lone copy in an empty directory), polling every ~50 ms on a fresh
+connection. Times are from `open -a "PCB Editor"`:
+
+1. Until about 0.3 s, the socket refuses connections.
+2. Until about 1.1-1.2 s, requests answer `AS_NOT_READY`.
+3. For the next ~250-350 ms, `GetOpenDocuments` lists the board with an
+   **empty `board_filename`** while `project.path` and `project.name` are
+   already set. 21 of 25 launches caught it: all 5 polled at a true 50 ms
+   cadence, and 16 of 20 polled more coarsely (each tick also ran
+   `session_status`, which takes up to ~0.8 s here).
+4. From about 1.45-1.6 s, `board_filename` is the file name
+   (`board.kicad_pcb`) and stays that way.
+
+During phases 2-3 each request takes up to ~250 ms to answer.
+`KipyBackend.open_boards` treats a document with an empty `board_filename`
+and a set `project.path` as `AS_NOT_READY` instead of joining them (which gave
+the project directory as the board path). `Session.call` retries that like
+any `AS_NOT_READY`. A non-empty `board_filename` is used as given, whatever
+its extension. The default budget (3 retries x 0.25 s) covers phase 3. A call
+that starts early in phase 2 can still end in the retryable `kicad_busy`.
+
+A PCB Editor launched with no file (a new, unsaved board) answers
+`board_filename=""` with `project.path=""` and `project.name=""` and keeps
+answering that way, so it is not retried. It is reported as a board with
+`path: null` and `path_basis: "unsaved"`, and the tools that need the file
+refuse it with `no_document`.

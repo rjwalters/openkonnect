@@ -15,7 +15,25 @@ DIRTY_UNKNOWN_NOTE = (
 )
 
 
+#: Why a board with no file is refused by tools that need the file.
+UNSAVED_BOARD_REASON = (
+    "The open board has never been saved, so it has no file. Save it in KiCad "
+    "(File > Save As), then call this tool again."
+)
+
+
 def board_document(ref: BoardRef) -> dict[str, Any]:
+    if ref.path is None:
+        return {
+            "kind": "board",
+            "path": None,
+            "path_basis": "unsaved",
+            "path_note": "KiCad reports no file name and no project: the board is new "
+            "and has never been saved.",
+            "open": True,
+            "dirty": "unknown",
+            "dirty_basis": "none",
+        }
     return {
         "kind": "board",
         "path": ref.path,
@@ -24,6 +42,19 @@ def board_document(ref: BoardRef) -> dict[str, Any]:
         "dirty": "unknown",
         "dirty_basis": "none",
     }
+
+
+def require_saved(ref: BoardRef) -> str:
+    """The board's file path, or ``no_document`` if it has never been saved."""
+    from ..errors import ErrorCode, OpenKonnectError
+
+    if ref.path is None:
+        raise OpenKonnectError(
+            ErrorCode.NO_DOCUMENT,
+            UNSAVED_BOARD_REASON,
+            details={"kind": "board", "saved": False},
+        )
+    return ref.path
 
 
 def inferred_schematic(ref: BoardRef) -> dict[str, Any] | None:

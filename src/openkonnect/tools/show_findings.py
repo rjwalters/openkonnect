@@ -433,7 +433,8 @@ def staleness(session: Session, ref: Any, input_hash: str | None) -> dict[str, A
             "input_hash": None,
             "basis": "The findings carry no input hash (pcb_sha256), so staleness is not known.",
         }
-    disk = file_state(ref.path).get("sha256")
+    # A board that has never been saved has no file to compare against.
+    disk = file_state(ref.path).get("sha256") if ref.path is not None else None
     if disk == input_hash:
         return {
             "possibly_stale": False,
