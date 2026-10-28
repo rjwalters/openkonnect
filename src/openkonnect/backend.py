@@ -23,9 +23,14 @@ NM_PER_MM = 1_000_000
 
 @dataclass
 class BoardRef:
-    """One board open in the PCB editor, as KiCad reports it."""
+    """One board open in the PCB editor, as KiCad reports it.
 
-    path: str
+    ``path`` is None for a board that has never been saved (a new board, with
+    no file and no project). Tools that need the file refuse it with
+    ``no_document``; see :func:`openkonnect.tools.common.require_saved`.
+    """
+
+    path: str | None
     file_name: str
     project_dir: str | None = None
     project_name: str | None = None
@@ -161,17 +166,28 @@ class KipyBackend:
             project_dir = doc.project.path or None
             project_name = doc.project.name or None
             file_name = doc.board_filename
-            if not file_name.endswith(".kicad_pcb"):
-                # For a few hundred ms after the PCB Editor starts, KiCad 10.0.7
-                # lists the board with an empty board_filename but a populated
-                # project path (#34; docs/ipc-client.md, "Startup window").
-                # Joining them would give the project directory as the board
-                # path. Treat it as "not ready" so Session.call retries it and
-                # ends in a retryable kicad_busy if it never clears.
-                raise ApiError(
-                    f"board document not fully loaded (board_filename={file_name!r})",
-                    code=ApiStatusCode.AS_NOT_READY,
-                )
+            if not file_name:
+                if project_dir:
+                    # For a few hundred ms after the PCB Editor starts, KiCad
+                    # 10.0.7 lists the board with an empty board_filename but a
+                    # populated project path (#34; docs/ipc-client.md, "Startup
+                    # window"). Joining them would give the project directory
+                    # as the board path. Treat it as "not ready" so Session.call
+                    # retries it and ends in a retryable kicad_busy if it never
+                    # clears.
+                    raise ApiError(
+                        "board document not fully loaded "
+                        f"(board_filename='', project.path={project_dir!r})",
+                        code=ApiStatusCode.AS_NOT_READY,
+                    )
+                # No filename and no project: a new board that has never been
+                # saved. KiCad keeps answering this way, so it is not a startup
+                # state to retry. Report the board with no path.
+                refs.append(BoardRef(None, "", None, project_name, handle=doc))
+                continue
+            # Any other non-empty name is reported as KiCad gives it, joined to
+            # the project directory when relative. Only "" was ever observed to
+            # mean "not loaded yet" (#34), so no other name is retried.
             path = file_name
             if project_dir and not os.path.isabs(file_name):
                 path = os.path.join(project_dir, file_name)

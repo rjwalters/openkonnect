@@ -11,7 +11,12 @@ from typing import Any
 
 from ..backend import client_api_version
 from ..session import Session
-from .common import DIRTY_UNKNOWN_NOTE, board_document, inferred_schematic
+from .common import (
+    DIRTY_UNKNOWN_NOTE,
+    UNSAVED_BOARD_REASON,
+    board_document,
+    inferred_schematic,
+)
 from .run_kct_handoff import find_kct
 
 DESCRIPTION = (
@@ -49,6 +54,13 @@ _STATIC_CAPABILITIES = {
 #: Tools that need a reachable KiCad with a board open.
 _BOARD_TOOLS = (
     "board_summary",
+    "save_before_external_write",
+    "sync_from_disk",
+    "run_kct_handoff",
+)
+
+#: Board tools that also need the board's file, so refuse a never-saved board.
+_FILE_TOOLS = (
     "save_before_external_write",
     "sync_from_disk",
     "run_kct_handoff",
@@ -106,7 +118,14 @@ def session_status(session: Session) -> dict[str, Any]:
             if boards
             else {"supported": False, "reason": "No board is open.", "error_code": "no_document"}
         )
-    if boards and find_kct() is None:
+    if boards and boards[0].path is None:
+        for tool in _FILE_TOOLS:
+            capabilities[tool] = {
+                "supported": False,
+                "reason": UNSAVED_BOARD_REASON,
+                "error_code": "no_document",
+            }
+    elif boards and find_kct() is None:
         capabilities["run_kct_handoff"] = {
             "supported": False,
             "reason": "The kct executable (kicad-tools) was not found on PATH.",

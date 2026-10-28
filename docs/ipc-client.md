@@ -83,9 +83,15 @@ connection. Times are from `open -a "PCB Editor"`:
    (`board.kicad_pcb`) and stays that way.
 
 During phases 2-3 each request takes up to ~250 ms to answer.
-`KipyBackend.open_boards` treats a document whose `board_filename` does not
-end in `.kicad_pcb` as `AS_NOT_READY` instead of joining it to the project
-path (which gave the project directory as the board path). `Session.call`
-retries that like any `AS_NOT_READY`. The default budget (3 retries x 0.25 s)
-covers phase 3. A call that starts early in phase 2 can still end in the
-retryable `kicad_busy`.
+`KipyBackend.open_boards` treats a document with an empty `board_filename`
+and a set `project.path` as `AS_NOT_READY` instead of joining them (which gave
+the project directory as the board path). `Session.call` retries that like
+any `AS_NOT_READY`. A non-empty `board_filename` is used as given, whatever
+its extension. The default budget (3 retries x 0.25 s) covers phase 3. A call
+that starts early in phase 2 can still end in the retryable `kicad_busy`.
+
+A PCB Editor launched with no file (a new, unsaved board) answers
+`board_filename=""` with `project.path=""` and `project.name=""` and keeps
+answering that way, so it is not retried. It is reported as a board with
+`path: null` and `path_basis: "unsaved"`, and the tools that need the file
+refuse it with `no_document`.
