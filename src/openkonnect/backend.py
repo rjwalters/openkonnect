@@ -16,6 +16,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from .errors import ErrorCode, OpenKonnectError
+
 NM_PER_MM = 1_000_000
 
 
@@ -244,20 +246,140 @@ class KipyBackend:
 
 
 def _edge_outline(board: Any) -> tuple[list[Any], dict[str, int] | None]:
-    """Edge.Cuts shapes and the union of their bounding boxes (file frame, nm)."""
-    from kipy.proto.board.board_types_pb2 import BoardLayer
+    """Edge.Cuts shapes and the box of their geometry (file frame, nm).
 
-    edge = [s for s in board.get_shapes() if s.layer == BoardLayer.BL_Edge_Cuts]
+    The box is the shapes' own geometry (corners, endpoints, arc, circle and
+    curve extents), not ``get_item_bounding_box``: KiCad's box includes the
+    drawn line width, which moved the board-frame origin by half a stroke (#32).
+
+    Shapes are read with ``get_items`` rather than ``Board.get_shapes``, which
+    silently drops a shape kipy cannot classify. An Edge.Cuts shape that is not
+    one of the six kipy shape classes raises ``internal_error`` instead of being
+    skipped, so the outline is never silently wrong.
+    """
+    from kipy.board_types import to_concrete_board_shape
+    from kipy.proto.board.board_types_pb2 import BoardLayer
+    from kipy.proto.common.types import KiCadObjectType
+
+    edge = [
+        to_concrete_board_shape(s)
+        for s in board.get_items([KiCadObjectType.KOT_PCB_SHAPE])
+        if s.layer == BoardLayer.BL_Edge_Cuts
+    ]
+    extents = [e for e in (_shape_extent(s) for s in edge) if e is not None]
     outline = None
-    if edge:
-        boxes = [b for b in board.get_item_bounding_box(edge) if b is not None]
-        if boxes:
-            x0 = min(b.pos.x for b in boxes)
-            y0 = min(b.pos.y for b in boxes)
-            x1 = max(b.pos.x + b.size.x for b in boxes)
-            y1 = max(b.pos.y + b.size.y for b in boxes)
-            outline = {"x0_nm": x0, "y0_nm": y0, "x1_nm": x1, "y1_nm": y1}
+    if extents:
+        outline = {
+            "x0_nm": min(e[0] for e in extents),
+            "y0_nm": min(e[1] for e in extents),
+            "x1_nm": max(e[2] for e in extents),
+            "y1_nm": max(e[3] for e in extents),
+        }
     return edge, outline
+
+
+Extent = tuple[int, int, int, int]  # x0, y0, x1, y1 in nm
+
+
+def _points_extent(points: list[Any]) -> Extent:
+    xs = [p.x for p in points]
+    ys = [p.y for p in points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _box_extent(box: Any) -> Extent:
+    return box.pos.x, box.pos.y, box.pos.x + box.size.x, box.pos.y + box.size.y
+
+
+def _shape_extent(shape: Any) -> Extent | None:
+    """One Edge.Cuts shape's geometric extent, without stroke width.
+
+    ``None`` only for a polygon with no outline points (it bounds nothing).
+    """
+    from kipy.board_types import (
+        BoardArc,
+        BoardBezier,
+        BoardCircle,
+        BoardPolygon,
+        BoardRectangle,
+        BoardSegment,
+    )
+    from kipy.geometry import arc_bounding_box
+
+    # Exact type checks: kipy leaves an unclassified shape as a bare BoardShape.
+    kind = type(shape)
+    if kind is BoardRectangle:
+        return _points_extent([shape.top_left, shape.bottom_right])
+    if kind is BoardSegment:
+        return _points_extent([shape.start, shape.end])
+    if kind is BoardArc:
+        return _box_extent(arc_bounding_box(shape.start, shape.mid, shape.end))
+    if kind is BoardCircle:
+        return _box_extent(shape.bounding_box())
+    if kind is BoardBezier:
+        return _bezier_extent(shape.start, shape.control1, shape.control2, shape.end)
+    if kind is BoardPolygon:
+        extents: list[Extent] = []
+        for poly in shape.polygons:  # holes lie inside their outline
+            for node in poly.outline:
+                if node.has_point:
+                    extents.append(_points_extent([node.point]))
+                elif node.has_arc:
+                    a = node.arc
+                    extents.append(_box_extent(arc_bounding_box(a.start, a.mid, a.end)))
+        if not extents:
+            return None
+        return (
+            min(e[0] for e in extents),
+            min(e[1] for e in extents),
+            max(e[2] for e in extents),
+            max(e[3] for e in extents),
+        )
+    proto = getattr(shape, "_proto", None)
+    geometry = None
+    with contextlib.suppress(Exception):
+        geometry = proto.shape.WhichOneof("geometry")  # type: ignore[union-attr]
+    shape_id = None
+    with contextlib.suppress(Exception):
+        shape_id = shape.id.value or None
+    raise OpenKonnectError(
+        ErrorCode.INTERNAL,
+        "An Edge.Cuts shape has a geometry openkonnect cannot measure, so the board "
+        "outline (and the board frame) cannot be computed. Report it with these details.",
+        details={"shape_id": shape_id, "geometry": geometry, "class": kind.__name__},
+    )
+
+
+def _bezier_extent(p0: Any, p1: Any, p2: Any, p3: Any) -> Extent:
+    """Extent of a cubic Bezier: its endpoints plus its interior extrema per axis.
+
+    B'(t) is proportional to (a - 2b + c) t^2 + 2 (b - a) t + a with
+    a = P1 - P0, b = P2 - P1, c = P3 - P2; its roots in (0, 1) are the extrema.
+    The control points themselves only bound the curve, so they are not used.
+    """
+
+    def axis(v0: float, v1: float, v2: float, v3: float) -> tuple[int, int]:
+        a, b, c = v1 - v0, v2 - v1, v3 - v2
+        qa, qb, qc = a - 2 * b + c, 2 * (b - a), a
+        ts: list[float] = []
+        if qa == 0:
+            if qb != 0:
+                ts.append(-qc / qb)
+        else:
+            disc = qb * qb - 4 * qa * qc
+            if disc >= 0:
+                r = disc**0.5
+                ts += [(-qb + r) / (2 * qa), (-qb - r) / (2 * qa)]
+        values = [float(v0), float(v3)]
+        for t in ts:
+            if 0 < t < 1:
+                u = 1 - t
+                values.append(u**3 * v0 + 3 * u * u * t * v1 + 3 * u * t * t * v2 + t**3 * v3)
+        return round(min(values)), round(max(values))
+
+    x0, x1 = axis(p0.x, p1.x, p2.x, p3.x)
+    y0, y1 = axis(p0.y, p1.y, p2.y, p3.y)
+    return x0, y0, x1, y1
 
 
 # -- selection (#5) ----------------------------------------------------------
