@@ -66,6 +66,17 @@ command's output). The snapshot matches, so the reload loads the human's
 saved file into the editor. The human's edit is kept on disk and in the
 editor; the command's output, already overwritten by that save, is not. No
 read of KiCad 10's API can tell this case apart from a clean run.
+The opposite order loses the human's save instead. If the human saves an
+edit after the command has read the file but before it writes, and then
+undoes that edit exactly, the command's write replaces the human's save on
+disk. The editor matches the snapshot again, so the reload goes ahead and
+loads the command's output, which was computed from the file without the
+edit. The saved edit is gone from disk. The command's write causes this
+loss, not the reload, and no read of KiCad 10's API can tell this case apart
+from a clean run either. Without the exact undo, the editor does not match
+the snapshot and the reload refuses with `document_dirty`. A save made
+before the command reads the file becomes part of the command's input, so
+nothing is lost.
 
 The reload is **not an undo step**. Ctrl+Z in KiCad will not bring back the
 editor's earlier state. To go back, restore the earlier file and run
