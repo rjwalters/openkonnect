@@ -1,8 +1,11 @@
 """Files KiCad and ``kct`` leave in ``tests/fixtures/`` stay out of ``git status`` (#33).
 
 The ignore checks ask git itself (``git check-ignore``, ``git ls-files -ci``)
-against the repo's real ``.gitignore``; they skip when git or a work tree is
-unavailable (for example, in an unpacked sdist). No KiCad needed.
+against the repo's real ``.gitignore``. Only committed ``.gitignore`` rules
+count: a match from a developer's ``core.excludesFile`` or the clone's
+``.git/info/exclude`` neither satisfies nor breaks a check, so local runs agree
+with CI (#42). They skip when git or a work tree is unavailable (for example,
+in an unpacked sdist). No KiCad needed.
 """
 
 from __future__ import annotations
@@ -43,29 +46,55 @@ def _git(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.fixture(scope="module")
-def git_tree() -> None:
+def git_tree() -> frozenset[str]:
+    """Skip without git or a work tree; return the tracked ``.gitignore`` files."""
     if shutil.which("git") is None:
         pytest.skip("git not available")
     r = _git("rev-parse", "--is-inside-work-tree")
     if r.returncode != 0 or r.stdout.strip() != "true":
         pytest.skip("not a git work tree")
+    r = _git("ls-files", "--", ".gitignore", "**/.gitignore")
+    assert r.returncode == 0, r.stderr
+    return frozenset(r.stdout.splitlines())
+
+
+def _repo_ignore_source(
+    path: str, tracked: frozenset[str]
+) -> tuple[str | None, subprocess.CompletedProcess[str]]:
+    """Return the tracked ``.gitignore`` whose rule ignores ``path``, if any.
+
+    ``check-ignore -v`` reports only the highest-precedence match, as
+    ``<source>:<line>:<pattern>\t<path>``; repo ``.gitignore`` files outrank
+    ``.git/info/exclude`` and ``core.excludesFile``, so when a committed rule
+    matches it is the one reported. A match from any other source, or a
+    negated (``!``) pattern, yields ``None``.
+    """
+    r = _git("check-ignore", "-v", "--no-index", path)
+    if r.returncode == 1:
+        return None, r
+    assert r.returncode == 0, f"{path}: {r.stdout}{r.stderr}"
+    source, _line, pattern = r.stdout.split("\t", 1)[0].split(":", 2)
+    if source not in tracked or pattern.startswith("!"):
+        return None, r
+    return source, r
 
 
 @pytest.mark.parametrize("path", IGNORED)
 def test_kicad_and_kct_files_are_ignored(git_tree, path):
-    r = _git("check-ignore", "-v", "--no-index", path)
-    assert r.returncode == 0, f"{path} is not ignored: {r.stdout}{r.stderr}"
-    assert r.stdout.strip(), path
+    source, r = _repo_ignore_source(path, git_tree)
+    assert source is not None, (
+        f"{path} is not ignored by a tracked .gitignore: {r.stdout!r}{r.stderr}"
+    )
 
 
 @pytest.mark.parametrize("path", NOT_IGNORED)
 def test_sources_and_real_projects_are_not_ignored(git_tree, path):
-    r = _git("check-ignore", "-v", "--no-index", path)
-    assert r.returncode == 1, f"{path} is ignored: {r.stdout}{r.stderr}"
+    source, r = _repo_ignore_source(path, git_tree)
+    assert source is None, f"{path} is ignored by {source}: {r.stdout!r}"
 
 
 def test_no_tracked_file_is_ignored(git_tree):
-    r = _git("ls-files", "-ci", "--exclude-standard")
+    r = _git("ls-files", "-ci", "--exclude-per-directory=.gitignore")
     assert r.returncode == 0, r.stderr
     assert r.stdout == ""
 
