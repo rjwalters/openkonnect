@@ -538,9 +538,29 @@ control, and grouping edits into transactions. Every entry here is live-editor.
 - **Outputs:** `differs` (true/false/unknown), and when known a summary by
   kind: footprints moved, added or removed; copper added or removed; zones
   changed. Each with references.
-- **Failure modes:** `no_document`. If kicad-tools is not installed, or its
-  board diff fails to load either side, the tool reports only `differs` and
-  gives the basis it used.
+- **Implementation note:** `kct pcb diff` compares two files, so the editor
+  side must be a file first.
+  - Take a snapshot of the open board, unsaved changes included, as a
+    temporary `.kicad_pcb`. Use the capture that
+    [SES-11](#ses-11-snapshot_board) describes; this entry adds no second
+    mechanism. Then run the diff between the saved file and that snapshot.
+  - The snapshot, and any project files copied beside it, go in a new
+    temporary directory created for this call, outside the user's project.
+    The tool deletes that directory before it returns, whether the diff
+    succeeded or failed. SES-11 keeps its snapshot when kicad-tools fails, for
+    diagnosis; SES-12 returns only `differs` and its basis, so it keeps
+    nothing.
+  - The snapshot is never written to the board's own path or over its saved
+    copy. This tool does not save the document and does not touch the saved
+    file.
+  - The comparison is semantic, item by item, so formatting differences
+    between the editor's text and a KiCad save do not matter. SES-12 does not
+    depend on that text matching a real KiCad save byte for byte (the open
+    question in #23).
+- **Failure modes:** `no_document`. If kicad-tools is not installed, if the
+  snapshot cannot be taken or written, or if the board diff fails to load
+  either side, the tool reports only `differs` (as `unknown` when it could not
+  compare) and gives the basis it used. No other error codes apply.
 - **Sources:** P-R1, P-R2, P-D4, P-T10.
 
 ### SES-13 `select_items`
