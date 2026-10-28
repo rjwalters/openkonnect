@@ -88,9 +88,15 @@ uv run ruff check . && uv run ruff format --check .
 uv run pytest -rs
 ```
 
-Unit tests run against a fake IPC backend. Tests marked `live_kicad` need a
-running KiCad 10 with the API on and `tests/fixtures/board.kicad_pcb` open,
-and skip otherwise (always in CI): `uv run pytest -m live_kicad -rs`.
+Unit tests run against a fake IPC backend. Tests marked `live_kicad` drive
+the open KiCad editor (they save, reload and change its selection), so they
+are skipped unless pytest is given `--live`, whatever `-m` filter or test path
+is passed; `uv run pytest -rs` (and CI) runs every other test and lists them as
+skipped. To run them, start KiCad 10 with the API on and the fixture board
+each test names open (`tests/fixtures/board.kicad_pcb`, or
+`tests/fixtures/selection.kicad_pcb` for the selection test), then run
+`uv run pytest --live -m live_kicad -rs`. With `--live` they still skip when
+KiCad is not reachable or the wrong board is open.
 
 ## Why this exists
 

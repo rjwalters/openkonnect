@@ -2,7 +2,7 @@
 
 Setup: start KiCad 10 with 'Enable KiCad API' on, and open
 ``tests/fixtures/board.kicad_pcb`` in the PCB editor. Then run
-``uv run pytest -m live_kicad -rs``. Without a reachable KiCad these skip.
+``uv run pytest --live -m live_kicad -rs``. Without a reachable KiCad these skip.
 """
 
 from __future__ import annotations
