@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -156,6 +157,15 @@ def make_session(
 
 
 FIXTURE_BOARD = os.path.join(os.path.dirname(__file__), "fixtures", "board.kicad_pcb")
+
+
+def remove_kct_artifacts(board: Path) -> None:
+    """Delete the ``<stem>.route.json`` record ``kct route`` writes beside ``board``.
+
+    Only the route record: KiCad's own ``.kicad_pro``/``.kicad_prl``/``.lck``
+    files belong to the open editor and are ignored by ``.gitignore`` instead.
+    """
+    board.with_suffix(".route.json").unlink(missing_ok=True)
 
 
 @pytest.fixture
