@@ -5,8 +5,9 @@ Never runs in CI. Setup: start KiCad 10 with 'Enable KiCad API' on, and open
 ``uv run pytest -m live_kicad -rs``. Without a reachable KiCad this skips.
 
 On KiCad 10 the board's dirty state is usually ``unknown``, so the test passes
-``allow_save=True``. The fixture file is restored, and the editor re-synced
-to it, afterwards.
+``allow_save=True``. Afterwards the fixture file is restored, the
+``board.route.json`` record ``kct route`` leaves beside it is removed, and the
+editor is re-synced to the restored file.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from openkonnect.tools.run_kct_handoff import find_kct, run_kct_handoff
 from openkonnect.tools.session_status import session_status
 from openkonnect.tools.sync_from_disk import sync_from_disk
 
-from ..conftest import FIXTURE_BOARD
+from ..conftest import FIXTURE_BOARD, remove_kct_artifacts
 
 pytestmark = pytest.mark.live_kicad
 
@@ -38,7 +39,10 @@ def open_fixture(live_session):
     path = Path(match[0]["path"])
     original = path.read_bytes()
     yield path
-    path.write_bytes(original)
+    try:
+        path.write_bytes(original)
+    finally:
+        remove_kct_artifacts(path)
     live_session.run_tool(lambda s: sync_from_disk(s, "board", discard_unsaved=True))
 
 

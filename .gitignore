@@ -95,3 +95,9 @@ build/
 .agents/skills/repo/.install-local.json
 .squad/
 .claude/skills/squad/.install-local.json
+
+# KiCad runtime/user state and kct output left by live tests (#33)
+~*.lck
+*.kicad_prl
+tests/fixtures/*.kicad_pro
+tests/fixtures/*.route.json
