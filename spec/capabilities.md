@@ -111,7 +111,10 @@ they test with, and should correct this spec when the two disagree.
 Every coordinate output names its frame:
 - `file`: absolute KiCad page coordinates, as stored in the `.kicad_pcb`, with
   Y pointing down;
-- `board`: relative to the top-left corner of the Edge.Cuts outline.
+- `board`: relative to the top-left corner of the board-level Edge.Cuts
+  graphics' geometry, stroke width excluded. Footprint-owned Edge.Cuts
+  graphics do not count, matching `kct` (kicad-tools `board_outline_bounds`),
+  so the outline size in `board_summary` omits them too.
 
 kicad-tools commands do not all use the same default frame. For example,
 `kct pcb move-footprint` takes board-relative coordinates unless `--absolute`

@@ -273,16 +273,23 @@ class KipyBackend:
 
 
 def _edge_outline(board: Any) -> tuple[list[Any], dict[str, int] | None]:
-    """Edge.Cuts shapes and the box of their geometry (file frame, nm).
+    """Board-level Edge.Cuts shapes and the box of their geometry (file frame, nm).
 
     The box is the shapes' own geometry (corners, endpoints, arc, circle and
     curve extents), not ``get_item_bounding_box``: KiCad's box includes the
     drawn line width, which moved the board-frame origin by half a stroke (#32).
 
-    Shapes are read with ``get_items`` rather than ``Board.get_shapes``, which
-    silently drops a shape kipy cannot classify. An Edge.Cuts shape that is not
-    one of the six kipy shape classes raises ``internal_error`` instead of being
-    skipped, so the outline is never silently wrong.
+    ``Board.get_shapes`` would give the same shapes (kipy 0.8.0 keeps an
+    unclassified shape as a bare ``BoardShape``); ``get_items`` is used so that
+    shape is visible here, and an Edge.Cuts shape that is not one of the six
+    kipy shape classes raises ``internal_error`` instead of being skipped, so
+    the outline is never silently wrong.
+
+    Only board-level Edge.Cuts graphics count; footprint-owned ones are
+    excluded to match ``kct``'s board origin (C-1, #41). No filter is needed:
+    KiCad 10.0.7 does not return footprint children from board-level
+    ``GetItems(KOT_PCB_SHAPE)`` (they come only through
+    ``FootprintInstance.definition``; docs/ipc-client.md).
     """
     from kipy.board_types import to_concrete_board_shape
     from kipy.proto.board.board_types_pb2 import BoardLayer

@@ -64,6 +64,19 @@ From KiCad 10.0.7 on macOS, observed without reading KiCad source:
 - The default socket is `/tmp/kicad/api.sock` (from kicad-python's default and
   KiCad's public docs). When that name is taken, KiCad appends the process ID.
 
+### Footprint Edge.Cuts graphics
+
+Observed on KiCad 10.0.7, macOS, 2026-10-28, with kipy 0.8.0 on
+`tests/fixtures/fp_edge.kicad_pcb` (a board-level `gr_rect` 100,50-130,70 mm
+plus an Edge.Cuts `fp_line` in footprint R1 at absolute 95,45-98,45 mm) (#41).
+Board-level `get_items([KOT_PCB_SHAPE])` returns only the `gr_rect`; its
+`parent` is a KIID that is not any footprint's id (the board's own). The
+footprint line is not in that list. It comes only through
+`get_footprints()[0].definition.shapes`, at absolute file coordinates, with
+`parent` set to R1's id. So `_edge_outline` already excludes footprint
+Edge.Cuts graphics, as `kct`'s board origin does (C-1), without a filter;
+`board_summary` reports origin 100,50 and size 30 x 20 mm on that board.
+
 ### Startup window
 
 Just after the PCB Editor starts, KiCad answers before the board is fully
