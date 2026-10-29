@@ -225,10 +225,13 @@ def save_before_external_write(
             editor_sha = text_sha256(text)
             on_disk = read_bytes(ref.path)
             # Only the bytes this result reports as sha256 may be matched: a file
-            # written again since the save check is never compared.
+            # deleted or written again since the save check is never compared,
+            # so the match is "unknown", not false (issue #50).
             if on_disk is not None and sha256_bytes(on_disk) == after["sha256"]:
                 basis = editor_match(session, text, on_disk)
-            matches = basis is not None
+                matches = basis is not None
+            else:
+                matches = "unknown"
         rec.update(
             action="saved",
             sha256=after["sha256"],

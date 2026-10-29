@@ -161,16 +161,19 @@ and the file bytes as token sequences:
 It is used only when KiCad reports a version on the allow-list
 `CANONICAL_MATCH_VERSIONS` (exact `KiCad.get_version()` string; today only
 `10.0.7`). On any other version, or if KiCad does not report one, only byte
-equality can give `false`, as before. A version is added only after it has
-been measured the way the subsection below records.
+equality can give `false`, as before. A version is added only after the
+checklist in [Adding a KiCad version to
+`CANONICAL_MATCH_VERSIONS`](#adding-a-kicad-version-to-canonical_match_versions)
+has been run on it, repeating the measurement the subsection below records.
 
 The comparison does not change the #15 rule. Both sides are still read fresh
 by openkonnect in the same call, and no recorded value can produce `false`.
 It also does not change the window above: an edit and an exact undo leave the
 same tokens as no edit, under byte equality too. In `save_before_external_write`
 the comparison after a save uses only the file bytes whose hash the result
-reports as `sha256`; a file written again in between is not compared, and
-`editor_matches_file` is `false`. The same binding holds without a save: the
+reports as `sha256`; a file deleted or written again in between is not
+compared, and `editor_matches_file` is `"unknown"`, not `false`: nothing showed
+that the editor and the file differ, only that the file changed. The same binding holds without a save: the
 dirty check records the hash of the exact file bytes it compared
 (`DirtyState.file_sha256`), and a `false` counts only if that hash equals the
 hash the caller read first (the `sha256` that `save_before_external_write`
@@ -187,7 +190,11 @@ read now, lacks.
 
 **Wire fields.** `save_before_external_write` keeps `editor_matches_file`
 (now meaning "equal by the rule above") and adds `match_basis`: `"bytes"`,
-`"canonical"` or `null` when they do not match. A clean `state_before`
+`"canonical"` or `null` when they do not match or were not compared.
+`editor_matches_file` is `true`, `false` (compared and different) or
+`"unknown"` (the editor text or the file could not be read, or the file
+changed after the save check, so they were not compared); only `true` lets
+`run_kct_handoff` take its snapshot. A clean `state_before`
 record carries `match_basis` too. `run_kct_handoff` copies both into its step
 2 record.
 
@@ -368,6 +375,47 @@ two reverts, the text differed from case 1 only in those two uuid lines. So
 when a file written by another tool leaves out uuids, even two reads of the
 same unchanged file, with a reload in between, do not give the same text.
 Once KiCad has saved the uuids (cases 2 to 5), they stay fixed.
+
+### Adding a KiCad version to CANONICAL_MATCH_VERSIONS
+
+The token comparison is trusted only on the exact versions measured. Before
+another `KiCad.get_version()` string joins `CANONICAL_MATCH_VERSIONS`
+(`src/openkonnect/kicad_text.py`), repeat the measurement on that version,
+black box only (kicad-python and the bytes on disk; never KiCad's source):
+
+1. Record `KiCad.get_version()` (the exact string that will be added), the
+   kicad-python version, the OS and the date.
+2. Copy `tests/fixtures/board.kicad_pcb` and
+   `tests/fixtures/selection.kicad_pcb` to a scratch directory (never save a
+   tracked file) and open each copy.
+3. For each copy, run `same_document` on `get_as_string()` and the file bytes
+   and record bytes equal and tokens equal for: after `Board.save()` (tokens
+   **must** be equal), a second read (equal), one footprint moved 1 mm and
+   not saved (tokens **must differ**), moved back (equal), and after
+   `Board.revert()` (equal). Use the same table shape as the #37 table above.
+4. **Comment syntax probe.** Add a candidate comment line to a scratch copy
+   (for example a line starting with `#` or `;` between two top-level
+   items). Reload it with `Board.revert()`, and record whether KiCad loads
+   it and whether the line appears in `get_as_string()` or the next save. If
+   KiCad accepts any comment form, the whitespace assumption in [the strict
+   token comparison](#the-strict-token-comparison-kicad-1007-only) is false:
+   do not add the version, and open an issue against `kicad_text.py`.
+   Otherwise update that assumption bullet to say it was probed, and on
+   which version.
+5. Run the live handoff test, `uv run pytest --live -m live_kicad -rs`, with
+   `selection.kicad_pcb` open. It must pass on the real reload path (step 2
+   `match_basis: "canonical"`, reload with `snapshot_matched: true` and
+   `discarded_unsaved: false`), not the `dirty_state_unknown` fallback.
+6. Only then add the string to `CANONICAL_MATCH_VERSIONS`, update the
+   allow-list assertion in `tests/test_kicad_text.py`
+   (`sorted(CANONICAL_MATCH_VERSIONS) == [...]`), and add a dated block with
+   the results to [Is the editor text byte-identical to a KiCad
+   save?](#is-the-editor-text-byte-identical-to-a-kicad-save), after the #37
+   table.
+
+No committed script or live test runs steps 3 and 4: they need a running
+KiCad, cannot run in CI, and would only repeat what this checklist records.
+The checklist and the existing live test (step 5) are the recorded check.
 
 ## Flags
 

@@ -375,8 +375,29 @@ def test_file_rewritten_after_the_save_check_is_not_matched(tmp_path, monkeypatc
     monkeypatch.setattr(save_mod, "read_board_text", read_then_third_party_writes)
     r = save(make_session(fake), allow_save=True)
     assert r["ok"] is True, r
-    assert r["documents"][0]["editor_matches_file"] is False
+    # Not compared, so not proven different: "unknown", never a guessed false (#50).
+    assert r["documents"][0]["editor_matches_file"] == "unknown"
     assert r["documents"][0]["match_basis"] is None
+
+
+def test_file_deleted_after_the_save_check_is_unknown(tmp_path, monkeypatch):
+    # A file that is gone when the editor text is compared was never compared (#50).
+    ref = board_on_disk(tmp_path)
+    fake = KicadSaveFake(ref, KICAD_EDITOR)
+    real = save_mod.read_board_text
+
+    def read_then_third_party_deletes(session, r):
+        text = real(session, r)
+        Path(r.path).unlink()
+        return text
+
+    monkeypatch.setattr(save_mod, "read_board_text", read_then_third_party_deletes)
+    r = save(make_session(fake), allow_save=True)
+    assert r["ok"] is True, r
+    (doc,) = r["documents"]
+    assert doc["editor_matches_file"] == "unknown"
+    assert doc["match_basis"] is None
+    assert doc["editor_sha256"] is not None
 
 
 def file_written_after_first_read(monkeypatch, module, new_text: str) -> None:
