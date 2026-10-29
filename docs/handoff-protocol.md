@@ -402,6 +402,11 @@ A failure names the step in `failed_step` and keeps the step records so far.
 
 ## When a step refuses: recovery
 
+The table covers refusals from `save_before_external_write` and
+`sync_from_disk` used alone, as well as from a handoff step. A board that has
+never been saved is refused before anything is saved or written: by the tool
+itself, or in `run_kct_handoff` at step 1 (`failed_step: "session_status"`).
+
 | Refusal | What it means | What to do |
 |---|---|---|
 | `dirty_state_unknown` at save | openkonnect cannot rule out unsaved edits | Save in KiCad, or pass `allow_save` to let openkonnect save them |
