@@ -20,7 +20,7 @@ from openkonnect.session import file_state
 from openkonnect.tools import findings as F
 from openkonnect.tools.get_selection import get_selection
 from openkonnect.tools.run_kct_handoff import find_kct
-from openkonnect.tools.show_findings import show_findings
+from openkonnect.tools.show_findings import _POINT_MESSAGES, show_findings
 
 from .conftest import SELECTION_BOARD, EditorFake, make_session
 
@@ -449,3 +449,10 @@ def test_round_trip_pads_through_kct_check_connectivity():
     r = show(fake, report)
     assert r["ok"] is True, r
     _assert_round_trip(_refs(sel), _refs(selected(fake)))
+
+
+def test_no_board_outline_message_says_board_level() -> None:
+    # Since #41 footprint Edge.Cuts graphics do not count toward the outline, so
+    # the message must say "board-level", matching the other outline reasons.
+    assert set(_POINT_MESSAGES) == {"frame_not_stated", "no_board_outline", "empty_area"}
+    assert "no board-level Edge.Cuts outline" in _POINT_MESSAGES["no_board_outline"]

@@ -283,8 +283,8 @@ NO_POINT_NOTE = (
 _POINT_MESSAGES = {
     "frame_not_stated": "The kicad-tools model does not say which frame this point is in "
     "(see G1), so it is not used.",
-    "no_board_outline": "The point is in the board frame, but the board has no Edge.Cuts "
-    "outline to define that frame.",
+    "no_board_outline": "The point is in the board frame, but the board has no "
+    "board-level Edge.Cuts outline to define that frame.",
     "empty_area": "No item's bounding box contains this point.",
 }
 
