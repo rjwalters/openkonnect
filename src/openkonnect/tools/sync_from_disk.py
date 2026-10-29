@@ -15,6 +15,7 @@ from ..errors import ErrorCode, OpenKonnectError
 from ..session import (
     DirtyState,
     Session,
+    bind_to_file,
     board_dirty_state,
     file_state,
     read_board_text,
@@ -27,8 +28,9 @@ DESCRIPTION = (
     "After a file-based tool (kct) wrote a board that is open in KiCad, reload the editor "
     "from the file. Refuses, changing nothing, if the editor may hold unsaved work: dirty "
     "or unknown (KiCad 10 has no dirty query) unless discard_unsaved=true. The board counts "
-    "as clean only when openkonnect reads the editor's content now and it is byte-identical "
-    "to the file now; no hash you pass can prove it clean. editor_hash (editor_sha256 from "
+    "as clean only when openkonnect reads the editor's content now and it equals the file "
+    "now (byte-identical, or on KiCad 10.0.7 equal token for token apart from KiCad's "
+    "known save formatting); no hash you pass can prove it clean. editor_hash (editor_sha256 from "
     "save_before_external_write) lets openkonnect detect an edit made in KiCad since "
     "(document_dirty); unchanged, it stays unknown. expected_hash (the file hash after your "
     "tool wrote it) refuses an unexpected write with stale_input. The reload is not an undo "
@@ -134,7 +136,11 @@ def sync_from_disk(
             # Clean needs the editor, read now, to equal the file, read now. The
             # caller's editor_hash can only show an edit (True), never prove clean.
             # Issue #15.
-            ds = board_dirty_state(session, ref, editor_baseline_sha256=editor_hash)
+            # A clean state counts only if proven on the bytes checked above.
+            ds = bind_to_file(
+                board_dirty_state(session, ref, editor_baseline_sha256=editor_hash),
+                fs["sha256"],
+            )
             plans.append((ref, fs, ds, _snapshot_match(ds, handoff_snapshot_sha256)))
 
     protected = [ds for _, _, ds, snap in plans if ds.must_protect and not snap]

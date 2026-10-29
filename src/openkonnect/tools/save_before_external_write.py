@@ -19,9 +19,13 @@ from ..errors import ErrorCode, OpenKonnectError
 from ..session import (
     DirtyState,
     Session,
+    bind_to_file,
     board_dirty_state,
+    editor_match,
     file_state,
     read_board_text,
+    read_bytes,
+    sha256_bytes,
     text_sha256,
 )
 from .common import inferred_schematic, require_saved
@@ -143,7 +147,11 @@ def save_before_external_write(
     plans: list[tuple[BoardRef, dict[str, Any], DirtyState]] = []
     if want_board:
         for ref in boards:
-            plans.append((ref, file_state(ref.path), board_dirty_state(session, ref)))
+            before = file_state(ref.path)
+            # A clean state counts only if it was proven on the bytes whose hash
+            # this result reports as sha256 (issue #37).
+            ds = bind_to_file(board_dirty_state(session, ref), before["sha256"])
+            plans.append((ref, before, ds))
 
     protected = [(ref, ds) for ref, _, ds in plans if ds.must_protect]
     if protected and not allow_save:
@@ -165,6 +173,7 @@ def save_before_external_write(
                 file_changed=False,
                 editor_sha256=ds.editor_sha256,
                 editor_matches_file=True,
+                match_basis=ds.match_basis,
             )
             results.append(rec)
             continue
@@ -205,19 +214,28 @@ def save_before_external_write(
 
         # Read the editor back (C-5). Its hash is the baseline sync_from_disk
         # uses to detect edits made after this save.
+        # editor_matches_file: the text, read now, equals the file, read now,
+        # by bytes or (on a measured KiCad version) by the strict token
+        # comparison; match_basis says which (issue #37).
         text = read_board_text(session, ref)
+        basis: str | None = None
         if text is None:
             editor_sha, matches = None, "unknown"
         else:
             editor_sha = text_sha256(text)
-            with open(ref.path, "rb") as f:
-                matches = f.read() == text.encode("utf-8")
+            on_disk = read_bytes(ref.path)
+            # Only the bytes this result reports as sha256 may be matched: a file
+            # written again since the save check is never compared.
+            if on_disk is not None and sha256_bytes(on_disk) == after["sha256"]:
+                basis = editor_match(session, text, on_disk)
+            matches = basis is not None
         rec.update(
             action="saved",
             sha256=after["sha256"],
             file_changed=True,
             editor_sha256=editor_sha,
             editor_matches_file=matches,
+            match_basis=basis,
         )
         results.append(rec)
 

@@ -431,3 +431,80 @@ def test_default_runner_captures_output():
     res = default_runner([sys.executable, "-c", "print('{\"a\": 1}')"], 10, None)
     assert res.returncode == 0
     assert json.loads(res.stdout) == {"a": 1}
+
+
+# -- KiCad 10.0.7: the save matches canonically, so the handoff has its snapshot (#37) --
+
+
+def kicad_board(tmp_path, **kw):
+    from .test_save_before_external_write import KICAD_EDITOR, KicadSaveFake
+
+    ref = board_on_disk(tmp_path)  # written by another tool: needs allow_save
+    return ref, KicadSaveFake(ref, KICAD_EDITOR, **kw)
+
+
+def test_canonical_save_takes_the_snapshot_and_reloads_without_discard(tmp_path):
+    ref, fake = kicad_board(tmp_path)
+    r = handoff(make_session(fake), allow_save=True)
+    assert r["ok"] is True, r
+    assert r["steps"][1]["outcome"] == "saved"
+    assert r["steps"][1]["editor_matches_file"] is True
+    assert r["steps"][1]["match_basis"] == "canonical"
+    assert r["steps"][1]["editor_sha256"] != r["steps"][1]["sha256"]
+    assert r["steps"][5]["outcome"] == "reloaded"
+    assert r["steps"][5]["snapshot_matched"] is True
+    assert r["steps"][5]["discarded_unsaved"] is False
+    assert fake.editor == KCT_TEXT
+
+
+def test_canonical_save_then_user_edit_during_command_is_document_dirty(tmp_path):
+    from .test_save_before_external_write import KICAD_EDITED
+
+    ref, fake = kicad_board(tmp_path)
+
+    def user_edits():
+        fake.editor = KICAD_EDITED
+
+    r = handoff(make_session(fake), FakeKct(during=user_edits), allow_save=True)
+    assert r["ok"] is False, r
+    assert r["failed_step"] == "sync_from_disk"
+    assert r["error"]["code"] == "document_dirty"
+    assert "revert_board" not in fake.calls
+    assert fake.editor == KICAD_EDITED
+    assert Path(ref.path).read_text() == KCT_TEXT
+
+
+def test_unlisted_version_has_no_snapshot_and_refuses_unknown(tmp_path):
+    ref, fake = kicad_board(tmp_path, kicad_version="10.0.8")
+    r = handoff(make_session(fake), allow_save=True)
+    assert r["ok"] is False, r
+    assert r["steps"][1]["editor_matches_file"] is False
+    assert r["failed_step"] == "sync_from_disk"
+    assert r["error"]["code"] == "dirty_state_unknown"
+    assert "revert_board" not in fake.calls
+
+
+def test_file_written_during_step_2_check_takes_no_snapshot(tmp_path, monkeypatch):
+    # The file changes between step 2's file read and its editor comparison, so
+    # the clean state is not bound to the reported sha256: step 2 refuses and
+    # nothing runs (Judge on PR #48, item 2).
+    from openkonnect.tools import save_before_external_write as save_mod
+
+    from .test_save_before_external_write import (
+        KICAD_EDITOR,
+        KicadSaveFake,
+        file_written_after_first_read,
+        kicad_save_form,
+    )
+
+    ref = board_on_disk(tmp_path, kicad_save_form(KICAD_EDITOR))
+    fake = KicadSaveFake(ref, KICAD_EDITOR)
+    file_written_after_first_read(monkeypatch, save_mod, kicad_save_form(KICAD_EDITOR) + "\n")
+    kct = FakeKct()
+    r = handoff(make_session(fake), kct)
+    assert r["ok"] is False, r
+    assert r["failed_step"] == "save_before_external_write"
+    assert r["error"]["code"] == "dirty_state_unknown"
+    assert "save_board" not in fake.calls
+    assert "revert_board" not in fake.calls
+    assert kct.calls == []

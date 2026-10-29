@@ -9,7 +9,7 @@ The seven steps of the handoff protocol (``docs/handoff-protocol.md``):
 4. if the command failed or timed out, stop without reloading;
 5. if the file did not change, skip the reload;
 6. otherwise ``sync_from_disk`` with both hashes and the handoff's own
-   snapshot: the hash of the content step 2 saved (or proved byte-identical to
+   snapshot: the hash of the editor content step 2 saved (or proved equal to
    the file), taken inside this call and never from a caller. The reload goes
    ahead without ``discard_unsaved`` only if the editor, read fresh at step 6,
    still hashes to that snapshot, so nothing changed in KiCad while the
@@ -259,6 +259,8 @@ def run_kct_handoff(
             "state_before": saved["state_before"],
             "sha256": saved["sha256"],
             "editor_sha256": saved["editor_sha256"],
+            "editor_matches_file": saved.get("editor_matches_file"),
+            "match_basis": saved.get("match_basis"),
         }
     )
 
@@ -351,14 +353,15 @@ def run_kct_handoff(
     steps.append({"step": 5, "name": "check_file_changed", "outcome": "changed"})
 
     # Step 6: reload, protected by the editor content this call saved at step 2.
-    # The snapshot is the handoff's own: the hash of the content step 2 saved (or
-    # proved byte-identical to the file), never a caller value. It counts only if
-    # the editor text and the file matched exactly at step 2.
+    # The snapshot is the handoff's own: the hash of the editor content step 2
+    # saved (or proved equal to the file), never a caller value. It counts only if
+    # step 2 read the editor text and the file fresh and found them equal, by
+    # bytes or by the strict token comparison on a measured KiCad version (issue
+    # #37). With a canonical match the editor hash differs from the file hash, so
+    # the two hashes are not compared here.
     snapshot = (
         saved["editor_sha256"]
-        if saved.get("editor_matches_file") is True
-        and saved["editor_sha256"] is not None
-        and saved["editor_sha256"] == saved["sha256"]
+        if saved.get("editor_matches_file") is True and saved["editor_sha256"] is not None
         else None
     )
     r = session.run_tool(
