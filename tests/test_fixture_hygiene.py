@@ -35,6 +35,7 @@ IGNORED = [
 NOT_IGNORED = [
     "tests/fixtures/board.kicad_pcb",
     "tests/fixtures/selection.kicad_pcb",
+    "tests/fixtures/fp_edge.kicad_pcb",
     "boards/x/x.kicad_pro",
 ]
 
