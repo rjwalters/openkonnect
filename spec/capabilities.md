@@ -240,7 +240,8 @@ control, and grouping edits into transactions. Every entry here is live-editor.
       record also has `exists_on_disk`;
     - `unsaved`: a board KiCad reports with no file name and no project, so
       it is new and has never been saved. `path` is `null`, and a `path_note`
-      says why. This is the only case where `path` is `null`.
+      says why. This is the only case where `path` is `null`. No schematic
+      is listed for such a board, as there is no project to infer it from.
 
     `dirty_basis` says how dirty was decided: KiCad's own flag (KiCad 11+),
     a documented content comparison against the saved file, or `none`;
@@ -250,8 +251,7 @@ control, and grouping edits into transactions. Every entry here is live-editor.
     ([SES-04](#ses-04-save_before_external_write),
     [SES-05](#ses-05-sync_from_disk),
     [SES-06](#ses-06-run_kct_handoff-and-the-handoff-protocol)) are marked
-    `supported: false` with `error_code: "no_document"`, and no schematic is
-    listed.
+    `supported: false` with `error_code: "no_document"`.
 - **KiCad 10 notes:**
   - There is no documented dirty query on KiCad 10. If the implementer cannot
     decide dirty state reliably from documented signals, it is reported as
