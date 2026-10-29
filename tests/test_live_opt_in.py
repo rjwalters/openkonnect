@@ -1,19 +1,15 @@
 """The ``--live`` opt-in for ``live_kicad`` tests (#40).
 
-Runs the real hooks from ``tests/conftest.py`` in a ``pytester`` sandbox over a
+Runs the real hooks from ``tests/live_opt_in.py`` in a ``pytester`` sandbox over a
 synthetic test file, so it never contacts KiCad. The live test's fixture
 writes a file when it runs; its absence proves no live fixture was set up.
 """
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
 
-from . import conftest
-
-REASON = "live_kicad: pass --live to run (drives the open KiCad editor)"
+from . import live_opt_in
 
 SYNTHETIC = """
 import pytest
@@ -34,10 +30,8 @@ def test_live(live_fixture):
 
 @pytest.fixture
 def sandbox(pytester: pytest.Pytester) -> pytest.Pytester:
-    hooks = (conftest.pytest_addoption, conftest.pytest_collection_modifyitems)
     pytester.makeconftest(
-        "from __future__ import annotations\n\nimport pytest\n\n\n"
-        + "\n\n".join(inspect.getsource(h) for h in hooks)
+        "from tests.live_opt_in import pytest_addoption, pytest_collection_modifyitems\n"
     )
     pytester.makeini("[pytest]\nmarkers =\n    live_kicad: synthetic live test\n")
     pytester.makepyfile(test_a=SYNTHETIC)
@@ -64,7 +58,7 @@ def test_live_skipped_without_flag(
     outcomes = result.parseoutcomes()
     assert outcomes["skipped"] == 1
     assert outcomes.get("passed", 0) == plain_passed
-    result.stdout.fnmatch_lines([f"SKIPPED * {REASON}"])
+    result.stdout.fnmatch_lines([f"SKIPPED * {live_opt_in.LIVE_SKIP_REASON}"])
     assert not fixture_ran(sandbox)
 
 

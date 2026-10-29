@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -40,9 +40,13 @@ NOT_IGNORED = [
 ]
 
 
-def _git(*args: str) -> subprocess.CompletedProcess[str]:
+def _git(*args: str, input: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", "-C", str(REPO), *args], capture_output=True, text=True, check=False
+        ["git", "-C", str(REPO), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        input=input,
     )
 
 
@@ -54,9 +58,23 @@ def git_tree() -> frozenset[str]:
     r = _git("rev-parse", "--is-inside-work-tree")
     if r.returncode != 0 or r.stdout.strip() != "true":
         pytest.skip("not a git work tree")
-    r = _git("ls-files", "--", ".gitignore", "**/.gitignore")
+    r = _git("ls-files", "-z")
     assert r.returncode == 0, r.stderr
-    return frozenset(r.stdout.splitlines())
+    return frozenset(p for p in r.stdout.split("\0") if PurePosixPath(p).name == ".gitignore")
+
+
+def _parse_check_ignore_z(stdout: str) -> tuple[str, str, str, str] | None:
+    """Parse one ``check-ignore -v -z`` record into ``(source, line, pattern, path)``.
+
+    The record is ``<source>\\0<line>\\0<pattern>\\0<path>\\0``, unquoted, so any
+    field may hold ``:``. Empty output (no match) yields ``None``.
+    """
+    if stdout == "":
+        return None
+    fields = stdout.split("\0")
+    assert len(fields) == 5 and fields[4] == "", f"not one -z record: {stdout!r}"
+    source, line, pattern, path = fields[:4]
+    return source, line, pattern, path
 
 
 def _repo_ignore_source(
@@ -64,20 +82,37 @@ def _repo_ignore_source(
 ) -> tuple[str | None, subprocess.CompletedProcess[str]]:
     """Return the tracked ``.gitignore`` whose rule ignores ``path``, if any.
 
-    ``check-ignore -v`` reports only the highest-precedence match, as
-    ``<source>:<line>:<pattern>\t<path>``; repo ``.gitignore`` files outrank
+    ``check-ignore -v -z --stdin`` reports only the highest-precedence match, as
+    the NUL-terminated record ``<source>\\0<line>\\0<pattern>\\0<path>\\0`` with no
+    C-quoting (see :func:`_parse_check_ignore_z`); repo ``.gitignore`` files outrank
     ``.git/info/exclude`` and ``core.excludesFile``, so when a committed rule
     matches it is the one reported. A match from any other source, or a
     negated (``!``) pattern, yields ``None``.
     """
-    r = _git("check-ignore", "-v", "--no-index", path)
+    r = _git("check-ignore", "-v", "-z", "--stdin", "--no-index", input=path + "\0")
     if r.returncode == 1:
         return None, r
-    assert r.returncode == 0, f"{path}: {r.stdout}{r.stderr}"
-    source, _line, pattern = r.stdout.split("\t", 1)[0].split(":", 2)
+    assert r.returncode == 0, f"{path}: {r.stdout!r}{r.stderr}"
+    parsed = _parse_check_ignore_z(r.stdout)
+    assert parsed is not None and parsed[3] == path, f"{path}: {r.stdout!r}"
+    source, _line, pattern, _path = parsed
     if source not in tracked or pattern.startswith("!"):
         return None, r
     return source, r
+
+
+def test_parse_check_ignore_z_keeps_colons_in_every_field():
+    record = "a:b/.gitignore\x002\x00x:*.kicad_prl\x00a:b/x:y.kicad_prl\x00"
+    assert _parse_check_ignore_z(record) == (
+        "a:b/.gitignore",
+        "2",
+        "x:*.kicad_prl",
+        "a:b/x:y.kicad_prl",
+    )
+
+
+def test_parse_check_ignore_z_empty_is_no_match():
+    assert _parse_check_ignore_z("") is None
 
 
 @pytest.mark.parametrize("path", IGNORED)
