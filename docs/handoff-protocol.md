@@ -448,6 +448,86 @@ other tools stay responsive.
 
 A failure names the step in `failed_step` and keeps the step records so far.
 
+### Files kct leaves beside the board
+
+Some `kct` commands write files next to the board as well as the board itself.
+kicad-tools writes them, not openkonnect, and the handoff does not report or
+remove them. So after a handoff they can show up in `git status`. The list
+below is for **kicad-tools 0.24.0**. It was read from its MIT source
+(`kicad_tools/cli/route_cmd.py`, `cli/route_receipt.py`, `cli/route_deadline.py`,
+`router/stuck_classifier.py`, `cli/commands/routing.py`, `cli/route_lint_gate.py`,
+`transaction.py` and the `cli/*_cmd.py` module of each command below). Other
+versions may write other files. `<stem>` is the board's file name without
+`.kicad_pcb`.
+
+**`kct route`** writes these beside the board:
+
+| File | When | Seen live |
+|---|---|---|
+| `<stem>.route.json` | Every completed route. It records the hashes of the board, `.kicad_pro` and `.kicad_dru` | yes |
+| `<stem>.kicad_pro` (rewritten) | Every completed route. It keeps the existing project content and overwrites only the design-rule and severity entries from the manufacturer profile. It is created if missing | yes |
+| `<stem>.kicad_dru` | Every completed route. The manufacturer's rules go in a marked block, and hand-written rules in an existing file are kept | yes |
+| `fab_profile.json` | Every completed route. It names the manufacturer profile used | yes |
+| `net_class_map.json` | When the route has a net-class map. It is written as `net_class_map.effective.json` instead if the input map has the name `net_class_map.json` | yes |
+| `<stem>.routing_plan.json` | When the router built a routing plan | yes |
+| `<stem>.access_witness.json` | When the router recorded any commits (its commit journal) | yes |
+| `current_paths.json` (or `current_paths.effective.json`) | Only with `--current-paths` | no |
+| `<stem>.search_failures.json` | Only when a net's search failed. A route with no failures deletes an old one | no |
+| `<stem>_partial.kicad_pcb`, with `_partial` copies of the sidecars above | Only when the route is interrupted or times out | no |
+| `<stem>.timeout.json` | Only when the route runs out of its `--timeout` deadline | no |
+| `<stem>_4layer.kicad_pcb` / `<stem>_6layer.kicad_pcb` | Only with `--auto-layers`, when it adds layers. The routed board then goes to this file, not to the board KiCad has open | no |
+
+"Seen live" means the file appeared when `kct route` ran through
+`run_kct_handoff` on `tests/fixtures/selection.kicad_pcb` with KiCad 10.0.7
+(#37). A `.kicad_pro` was already present beside that board, so there it was
+rewritten, not created.
+
+**The other allow-listed commands**, run with the output on the board itself
+(`-o {board}`), write only the board, apart from these opt-in cases:
+
+- `route-auto --checkpoint <file>` writes the checkpoint board and its
+  `.checkpoint.json` at the path you give. `route-auto --lint-gate` moves a
+  routed board that fails the gate to `<stem>.lint-rejected.kicad_pcb`. Its
+  staging directory, `.<board name>.lint-gate-<pid>-<random>/`, is left beside
+  the board only if the run is killed. The next gated run removes it.
+- `optimize-placement --checkpoint <dir>` saves the optimizer's state in
+  `<dir>`.
+- `fix-drc --transactional` keeps a failed attempt as
+  `<board name>.failed-<UTC timestamp>.kicad_pcb`, for example
+  `board.kicad_pcb.failed-20261029T120000Z.kicad_pcb`, and restores the board.
+
+`stitch` and `route-auto` copy the project files (`.kicad_pro`, and for
+`route-auto` also `.kicad_dru`) only when the output path differs from the
+input, so not in a handoff. The temporary files of these commands go to the
+system temporary directory or are removed before the command exits.
+`zones fill` runs `kicad-cli`, and this list does not cover what `kicad-cli`
+itself may write.
+
+What to do with them:
+
+- **Keep.** `kct check` and later `kct` runs read these files. For example,
+  `kct check` reads `fab_profile.json` and `net_class_map.json` to check against
+  the same manufacturer tier and net classes as the route. Keeping them is a
+  valid choice.
+- **Ignore.** Add the generated names to `.gitignore`:
+
+  ```gitignore
+  *.route.json
+  *.routing_plan.json
+  *.access_witness.json
+  *.search_failures.json
+  *.timeout.json
+  fab_profile.json
+  net_class_map.json
+  ```
+
+  Do not ignore `.kicad_pro` or `.kicad_dru`. They are normally committed
+  project files, and `kct route` changes their design rules. Review the diff
+  and commit or revert it.
+- **Remove.** Delete the files by name after the handoff, for example
+  `rm board.route.json board.routing_plan.json`. Do not use `git clean -x`. It
+  also deletes every other ignored file in the tree.
+
 ## When a step refuses: recovery
 
 The table covers refusals from `save_before_external_write` and
