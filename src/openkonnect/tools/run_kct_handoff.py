@@ -183,6 +183,11 @@ REDIRECT_FLAGS: dict[str, frozenset[str]] = {
     "--checkpoint": frozenset({"route", "route-auto", "optimize-placement"}),
 }
 _OUTPUT_LONG = "--output"
+#: ``--o`` is refused outright (issue #65), whatever its value and subcommand:
+#: on ``route`` kct finds it ambiguous (``--output``, ``--oracle-rounds``,
+#: ``--order-method``), and counting it as ``--output`` elsewhere would depend
+#: on each subcommand's flag set. ``--ou`` and longer still abbreviate ``--output``.
+_AMBIGUOUS_OUTPUT = "--o"
 
 #: Subcommands that do not write the board in place when ``-o`` is absent
 #: (issue #63), so a handoff must pass ``-o {board}``. In kicad-tools 0.24.0
@@ -201,7 +206,8 @@ def _check_output_flags(argv: list[str]) -> bool:
 
     ``-o``/``--output`` is allowed only with the value exactly ``{board}``, in any
     spelling (``-o {board}``, ``-o{board}``, ``--output {board}``,
-    ``--output={board}``, an abbreviation of ``--output``, or ``-o`` inside a
+    ``--output={board}``, an abbreviation of ``--output`` at least ``--ou``
+    long (``--o`` is refused), or ``-o`` inside a
     cluster of short flags such as ``-vo {board}`` or ``-qo{board}``).
 
     Returns True if an output flag (necessarily ``{board}``) was given before
@@ -216,6 +222,13 @@ def _check_output_flags(argv: list[str]) -> bool:
             return seen_output
         if arg.startswith("--"):
             opt, eq, inline = arg.partition("=")
+            if opt == _AMBIGUOUS_OUTPUT:
+                raise E.invalid_argument(
+                    f"{_AMBIGUOUS_OUTPUT} is ambiguous (on route it also abbreviates "
+                    "--oracle-rounds and --order-method), so it is not allowed in "
+                    f"run_kct_handoff. Write -o {BOARD_TOKEN} or --output {BOARD_TOKEN}.",
+                    got=arg,
+                )
             for flag, subcommands in REDIRECT_FLAGS.items():
                 if subcommand in subcommands and _abbreviates(opt, flag):
                     raise E.invalid_argument(

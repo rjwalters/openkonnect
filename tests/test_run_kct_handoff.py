@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from openkonnect.errors import OpenKonnectError
 from openkonnect.tools.run_kct_handoff import (
     CommandResult,
     default_runner,
@@ -116,6 +117,11 @@ def test_allow_list_accepts_leading_kct_and_subcommands():
         ["route", "{board}", "-qoother.kicad_pcb"],
         ["route", "{board}", "-vo"],
         ["route", "{board}", "-o", "{board}", "--output", "other.kicad_pcb"],
+        # --o is ambiguous on route and refused everywhere, whatever its value (#65).
+        ["route", "{board}", "--o", "{board}"],
+        ["route", "{board}", "--o={board}"],
+        ["fix-vias", "{board}", "--o", "other.kicad_pcb"],
+        ["fix-vias", "{board}", "--o", "{board}"],
     ],
 )
 def test_output_redirecting_flags_are_invalid_and_touch_nothing(tmp_path, command):
@@ -143,6 +149,7 @@ def test_output_redirecting_flags_are_invalid_and_touch_nothing(tmp_path, comman
         ["optimize-traces", "{board}", "--ch", "0.2"],
         ["place-silk-refs", "{board}", "--a"],
         ["route", "{board}", "--out", "{board}"],
+        ["route", "{board}", "--ou", "{board}"],
         ["route-auto", "{board}", "--net", "X", "-o", "{board}"],
         ["fix-vias", "{board}"],
         ["zones", "fill", "{board}"],
@@ -153,6 +160,16 @@ def test_output_to_the_board_is_accepted(command):
     assert validate_command(command) == command
 
 
+@pytest.mark.parametrize("arg", ["--o", "--o={board}"])
+def test_bare_double_dash_o_message_names_the_supported_spellings(arg):
+    command = ["route", "{board}", arg] + ([] if "=" in arg else ["{board}"])
+    with pytest.raises(OpenKonnectError) as exc:
+        validate_command(command)
+    assert "ambiguous" in exc.value.message
+    assert "-o {board}" in exc.value.message
+    assert "--output {board}" in exc.value.message
+
+
 # -- subcommands that need -o {board} (issue #63) ---------------------------------
 
 
@@ -160,7 +177,7 @@ def test_output_to_the_board_is_accepted(command):
     "command",
     [
         ["route", "{board}"],
-        ["kct", "route", "{board}", "--resume"],
+        ["kct", "route", "{board}", "--resume", "ck.kicad_pcb"],
         ["route-auto", "{board}", "--net", "X"],
         # After "--", -o is a positional, not the output flag.
         ["route", "{board}", "--", "-o", "{board}"],
