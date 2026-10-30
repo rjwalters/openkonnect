@@ -55,8 +55,8 @@ it. At step 6, openkonnect reads the editor text fresh:
   `discarded_unsaved: true`.
 - **No snapshot** (KiCad did not serve the text at step 2, or it did not match
   the saved file, which is always the case after a save on a KiCad version not
-  on the measured allow-list): the reload refuses with `dirty_state_unknown` unless
-  `discard_unsaved` is set.
+  on the measured allow-list): the reload refuses with `dirty_state_unknown`
+  unless `discard_unsaved` is set.
 
 A plain `sync_from_disk` call has no snapshot. There, `editor_hash` can only
 detect an edit (`document_dirty`); after an external write an unchanged editor
@@ -446,10 +446,14 @@ allow-list of known board-writing commands (`KCT_ALLOW_LIST` in
 Flags that make `kct` write somewhere other than the open board also give
 `invalid_argument` before KiCad is contacted (#59), because the command could
 exit 0 while the board KiCad has open stays unchanged: `--auto-layers`,
-`--checkpoint` (each only on the subcommands that define it), and `-o`/`--output` with any value other than exactly
-`{board}`. All spellings are checked (`-o X`, `-oX`, `--output X`,
-`--output=X`, `-o` inside a short-flag cluster such as `-vo X` or `-qoX`, and
-abbreviations such as `--out` or `--auto-l`). `--auto-layers` is on by default
+`--checkpoint` (each only on the subcommands that define it), and
+`-o`/`--output` with any value other than exactly `{board}`. All spellings are
+checked (`-o X`, `-oX`, `--output X`, `--output=X`, `-o` inside a short-flag
+cluster such as `-vo X` or `-qoX`, and abbreviations such as `--out` or
+`--auto-l`). An abbreviation of `--output` must be at least `--ou`: `--o` is
+refused with any value and on every subcommand (#65), because on `route` kct
+finds it ambiguous (`--output`, `--oracle-rounds`, `--order-method`). Write
+`-o {board}` or `--output {board}` instead. `--auto-layers` is on by default
 in kicad-tools 0.24.0 and then honors the output path, so refusing the explicit
 flag is only a guard against older versions.
 
@@ -472,11 +476,11 @@ Some `kct` commands write files next to the board as well as the board itself.
 kicad-tools writes them, not openkonnect, and the handoff does not report or
 remove them. So after a handoff they can show up in `git status`. The list
 below is for **kicad-tools 0.24.0**. It was read from its MIT source
-(`kicad_tools/cli/route_cmd.py`, `cli/route_receipt.py`, `cli/route_deadline.py`,
-`router/stuck_classifier.py`, `cli/commands/routing.py`, `cli/route_lint_gate.py`,
-`transaction.py` and the `cli/*_cmd.py` module of each command below). Other
-versions may write other files. `<stem>` is the board's file name without
-`.kicad_pcb`.
+(`kicad_tools/cli/route_cmd.py`, `cli/route_receipt.py`,
+`cli/route_deadline.py`, `router/stuck_classifier.py`,
+`cli/commands/routing.py`, `cli/route_lint_gate.py`, `transaction.py` and the
+`cli/*_cmd.py` module of each command below). Other versions may write other
+files. `<stem>` is the board's file name without `.kicad_pcb`.
 
 **`kct route`** writes these beside the board:
 
@@ -493,7 +497,7 @@ versions may write other files. `<stem>` is the board's file name without
 | `<stem>.search_failures.json` | Only when a net's search failed. A route with no failures deletes an old one | no |
 | `<stem>_partial.kicad_pcb`, with `_partial` copies of the sidecars above | Only when the route is interrupted or times out | no |
 | `<stem>.timeout.json` | Only when the route runs out of its `--timeout` deadline | no |
-| `<stem>_4layer.kicad_pcb` / `<stem>_6layer.kicad_pcb` | Never written by 0.24.0: layer escalation (`--auto-layers`, on by default) writes the routed board to the output path exactly (upstream #2809). A route may instead delete stale files of these names left beside the output by older versions | no |
+| `<stem>_4layer.kicad_pcb` / `<stem>_6layer.kicad_pcb` | Never written by 0.24.0: layer escalation (`--auto-layers`, on by default) writes the routed board to the output path exactly (upstream #2809). A route may instead delete stale files of these names, and `<stem>_4layer.kicad_prl` / `<stem>_6layer.kicad_prl`, left beside the output by older versions | no |
 
 "Seen live" means the file appeared when `kct route` ran through
 `run_kct_handoff` on `tests/fixtures/selection.kicad_pcb` with KiCad 10.0.7
@@ -501,7 +505,8 @@ versions may write other files. `<stem>` is the board's file name without
 rewritten, not created.
 
 **The other allow-listed commands**, run with the output on the board itself
-(in place, or `-o {board}`), write only the board, apart from these opt-in cases:
+(in place, or `-o {board}`), write only the board, apart from these opt-in
+cases:
 
 - `route-auto --checkpoint <file>` writes the checkpoint board and its
   `.checkpoint.json` at the path you give. `run_kct_handoff` refuses
