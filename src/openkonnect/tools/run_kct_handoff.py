@@ -164,18 +164,19 @@ def validate_command(command: Any) -> list[str]:
 
 #: Flags that make kct write somewhere other than the open board (issue #59):
 #: ``--auto-layers`` can write ``<stem>_4layer.kicad_pcb`` and still exit 0, and
-#: ``--checkpoint`` writes extra state files. Refused outright.
-REDIRECT_FLAGS: tuple[str, ...] = ("--auto-layers", "--checkpoint")
-#: Real kct flags that are also prefixes of a refused flag, so they are not
-#: mistaken for argparse abbreviations of it.
-_EXACT_FLAGS = frozenset({"--auto", "--check"})
+#: ``--checkpoint`` writes extra state files. Refused outright, but only on the
+#: subcommands that define them, so a valid abbreviation of some other flag on
+#: another subcommand (``fix-vias --c 1`` is ``--copper``) is not refused.
+REDIRECT_FLAGS: dict[str, frozenset[str]] = {
+    "--auto-layers": frozenset({"route"}),
+    "--checkpoint": frozenset({"route", "route-auto", "optimize-placement"}),
+}
 _OUTPUT_LONG = "--output"
-_OUTPUT_SHORT = "-o"
 
 
 def _abbreviates(opt: str, flag: str) -> bool:
     """True if ``opt`` is ``flag`` or an argparse-style abbreviation of it."""
-    return len(opt) > 2 and flag.startswith(opt) and opt not in _EXACT_FLAGS
+    return len(opt) > 2 and flag.startswith(opt)
 
 
 def _check_output_flags(argv: list[str]) -> None:
@@ -183,8 +184,10 @@ def _check_output_flags(argv: list[str]) -> None:
 
     ``-o``/``--output`` is allowed only with the value exactly ``{board}``, in any
     spelling (``-o {board}``, ``-o{board}``, ``--output {board}``,
-    ``--output={board}``, or an abbreviation of ``--output``).
+    ``--output={board}``, an abbreviation of ``--output``, or ``-o`` inside a
+    cluster of short flags such as ``-vo {board}`` or ``-qo{board}``).
     """
+    subcommand = argv[0]
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -192,8 +195,8 @@ def _check_output_flags(argv: list[str]) -> None:
             return
         if arg.startswith("--"):
             opt, eq, inline = arg.partition("=")
-            for flag in REDIRECT_FLAGS:
-                if _abbreviates(opt, flag):
+            for flag, subcommands in REDIRECT_FLAGS.items():
+                if subcommand in subcommands and _abbreviates(opt, flag):
                     raise E.invalid_argument(
                         f"{flag} makes kct write somewhere other than the open board, "
                         "so the handoff would report success while KiCad's board is "
@@ -205,8 +208,10 @@ def _check_output_flags(argv: list[str]) -> None:
                 _check_output_value(arg, value)
                 i += 1 if eq else 2
                 continue
-        elif arg.startswith(_OUTPUT_SHORT):
-            inline = arg[len(_OUTPUT_SHORT) :]
+        elif arg.startswith("-") and len(arg) > 1 and "o" in arg[1:]:
+            # Short-flag cluster containing -o: argparse reads what follows the
+            # ``o`` as its value, or the next token if ``o`` is last.
+            inline = arg[arg.index("o", 1) + 1 :]
             value = inline if inline else (argv[i + 1] if i + 1 < len(argv) else None)
             _check_output_value(arg, value)
             i += 1 if inline else 2

@@ -446,9 +446,10 @@ allow-list of known board-writing commands (`KCT_ALLOW_LIST` in
 Flags that make `kct` write somewhere other than the open board also give
 `invalid_argument` before KiCad is contacted (#59), because the command could
 exit 0 while the board KiCad has open stays unchanged: `--auto-layers`,
-`--checkpoint`, and `-o`/`--output` with any value other than exactly
+`--checkpoint` (each only on the subcommands that define it), and `-o`/`--output` with any value other than exactly
 `{board}`. All spellings are checked (`-o X`, `-oX`, `--output X`,
-`--output=X`, and abbreviations such as `--out` or `--auto-l`).
+`--output=X`, `-o` inside a short-flag cluster such as `-vo X` or `-qoX`, and
+abbreviations such as `--out` or `--auto-l`).
 
 Each IPC step runs under the normal per-call bound (`--timeout`). The command
 runs under `timeout_s`. The session's connection is not held while it runs, so

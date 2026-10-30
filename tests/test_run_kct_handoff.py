@@ -107,6 +107,9 @@ def test_allow_list_accepts_leading_kct_and_subcommands():
         ["route", "{board}", "--out", "other.kicad_pcb"],
         ["route", "{board}", "-o", "{board}.bak"],
         ["route", "{board}", "-o"],
+        ["route", "{board}", "-vo", "other.kicad_pcb"],
+        ["route", "{board}", "-qoother.kicad_pcb"],
+        ["route", "{board}", "-vo"],
         ["route", "{board}", "-o", "{board}", "--output", "other.kicad_pcb"],
     ],
 )
@@ -129,8 +132,11 @@ def test_output_redirecting_flags_are_invalid_and_touch_nothing(tmp_path, comman
         ["route", "{board}", "-o{board}"],
         ["route", "{board}", "--output", "{board}"],
         ["route", "{board}", "--output={board}"],
-        ["route", "{board}", "--auto", "-o", "{board}"],
-        ["fix-drc", "{board}", "--check"],
+        ["route", "{board}", "-vo", "{board}"],
+        ["route", "{board}", "-qo{board}"],
+        ["fix-vias", "{board}", "--c", "1"],
+        ["optimize-traces", "{board}", "--ch", "0.2"],
+        ["place-silk-refs", "{board}", "--a"],
         ["route", "{board}"],
     ],
 )
