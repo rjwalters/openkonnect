@@ -31,8 +31,8 @@ it for you. Any other tool can follow the same steps by hand with
    without `discard_unsaved` when the editor text matches the saved file
    (byte for byte, or on KiCad 10.0.7 by the strict token comparison; see "Is
    the editor text byte-identical to a KiCad save?"). If the user edited the
-   board while the command ran, the reload refuses with `document_dirty`, and the result reports both
-   the command's outcome and the refusal.
+   board while the command ran, the reload refuses with `document_dirty`, and
+   the result reports both the command's outcome and the refusal.
 7. **Report.** One record per step, the command's exit code and JSON output,
    and the final document state.
 
@@ -40,9 +40,9 @@ it for you. Any other tool can follow the same steps by hand with
 
 Within one `run_kct_handoff` call, step 2 saves the editor (or proves the
 editor text equal to the file, by the rule in "Dirty state: the tri-state")
-and records the hash of that exact editor content. This snapshot is taken by the tool itself; it is never an argument
-and no caller value can stand in for it. At step 6, openkonnect reads the
-editor text fresh:
+and records the hash of that exact editor content. This snapshot is taken by
+the tool itself; it is never an argument and no caller value can stand in for
+it. At step 6, openkonnect reads the editor text fresh:
 
 - **It hashes to the snapshot:** nothing changed in KiCad while the command
   ran, so the editor holds only what step 2 saved. The reload goes ahead
@@ -173,12 +173,13 @@ same tokens as no edit, under byte equality too. In `save_before_external_write`
 the comparison after a save uses only the file bytes whose hash the result
 reports as `sha256`; a file deleted or written again in between is not
 compared, and `editor_matches_file` is `"unknown"`, not `false`: nothing showed
-that the editor and the file differ, only that the file changed. The same binding holds without a save: the
-dirty check records the hash of the exact file bytes it compared
-(`DirtyState.file_sha256`), and a `false` counts only if that hash equals the
-hash the caller read first (the `sha256` that `save_before_external_write`
-reports, or the hash `sync_from_disk` checks against `expected_hash`). If the
-file was written between the two reads, the state is `unknown`.
+that the editor and the file differ, only that the file changed. The same
+binding holds without a save: the dirty check records the hash of the exact
+file bytes it compared (`DirtyState.file_sha256`), and a `false` counts only if
+that hash equals the hash the caller read first (the `sha256` that
+`save_before_external_write` reports, or the hash `sync_from_disk` checks
+against `expected_hash`). If the file was written between the two reads, the
+state is `unknown`.
 
 **Where `false` applies.** A canonical match gives `dirty: false` in every
 caller of the dirty check, not only inside `run_kct_handoff`: a
@@ -519,6 +520,12 @@ What to do with them:
   *.timeout.json
   fab_profile.json
   net_class_map.json
+  net_class_map.effective.json
+  current_paths*.json
+  *_partial.kicad_pcb
+  *.lint-rejected.kicad_pcb
+  *.failed-*.kicad_pcb
+  .*.lint-gate-*/
   ```
 
   Do not ignore `.kicad_pro` or `.kicad_dru`. They are normally committed

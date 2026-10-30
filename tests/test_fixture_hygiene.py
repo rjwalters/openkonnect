@@ -10,6 +10,7 @@ in an unpacked sdist). No KiCad needed.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path, PurePosixPath
@@ -40,13 +41,20 @@ NOT_IGNORED = [
 ]
 
 
+# ``git check-ignore`` rejects literal and glob pathspec modes ("pathspec magic
+# not supported by this command"), so a caller's setting must not reach it.
+_PATHSPEC_ENV = ("GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS")
+
+
 def _git(*args: str, input: str | None = None) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k not in _PATHSPEC_ENV}
     return subprocess.run(
         ["git", "-C", str(REPO), *args],
         capture_output=True,
         text=True,
         check=False,
         input=input,
+        env=env,
     )
 
 
