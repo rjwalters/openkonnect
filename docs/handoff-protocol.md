@@ -449,7 +449,16 @@ exit 0 while the board KiCad has open stays unchanged: `--auto-layers`,
 `--checkpoint` (each only on the subcommands that define it), and `-o`/`--output` with any value other than exactly
 `{board}`. All spellings are checked (`-o X`, `-oX`, `--output X`,
 `--output=X`, `-o` inside a short-flag cluster such as `-vo X` or `-qoX`, and
-abbreviations such as `--out` or `--auto-l`).
+abbreviations such as `--out` or `--auto-l`). `--auto-layers` is on by default
+in kicad-tools 0.24.0 and then honors the output path, so refusing the explicit
+flag is only a guard against older versions.
+
+`route` and `route-auto` must be given `-o {board}` (in any of the spellings
+above), or the command gives `invalid_argument` before KiCad is contacted
+(#63). Without `-o`, kicad-tools 0.24.0 `route` writes `<stem>_routed.kicad_pcb`
+and `route-auto` saves nothing, so either could exit 0 with the open board
+unchanged. The other allow-listed commands write the board in place when `-o`
+is absent, so for them `-o {board}` is optional.
 
 Each IPC step runs under the normal per-call bound (`--timeout`). The command
 runs under `timeout_s`. The session's connection is not held while it runs, so
@@ -484,7 +493,7 @@ versions may write other files. `<stem>` is the board's file name without
 | `<stem>.search_failures.json` | Only when a net's search failed. A route with no failures deletes an old one | no |
 | `<stem>_partial.kicad_pcb`, with `_partial` copies of the sidecars above | Only when the route is interrupted or times out | no |
 | `<stem>.timeout.json` | Only when the route runs out of its `--timeout` deadline | no |
-| `<stem>_4layer.kicad_pcb` / `<stem>_6layer.kicad_pcb` | Only with `--auto-layers`, when it adds layers. The routed board then goes to this file, not to the board KiCad has open. `run_kct_handoff` refuses `--auto-layers`, so not in a handoff | no |
+| `<stem>_4layer.kicad_pcb` / `<stem>_6layer.kicad_pcb` | Never written by 0.24.0: layer escalation (`--auto-layers`, on by default) writes the routed board to the output path exactly (upstream #2809). A route may instead delete stale files of these names left beside the output by older versions | no |
 
 "Seen live" means the file appeared when `kct route` ran through
 `run_kct_handoff` on `tests/fixtures/selection.kicad_pcb` with KiCad 10.0.7
@@ -492,7 +501,7 @@ versions may write other files. `<stem>` is the board's file name without
 rewritten, not created.
 
 **The other allow-listed commands**, run with the output on the board itself
-(`-o {board}`), write only the board, apart from these opt-in cases:
+(in place, or `-o {board}`), write only the board, apart from these opt-in cases:
 
 - `route-auto --checkpoint <file>` writes the checkpoint board and its
   `.checkpoint.json` at the path you give. `run_kct_handoff` refuses
