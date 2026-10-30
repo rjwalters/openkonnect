@@ -158,7 +158,69 @@ def validate_command(command: Any) -> list[str]:
             "the open board's path, so the command writes the file KiCad has open.",
             got=argv,
         )
+    _check_output_flags(argv)
     return argv
+
+
+#: Flags that make kct write somewhere other than the open board (issue #59):
+#: ``--auto-layers`` can write ``<stem>_4layer.kicad_pcb`` and still exit 0, and
+#: ``--checkpoint`` writes extra state files. Refused outright.
+REDIRECT_FLAGS: tuple[str, ...] = ("--auto-layers", "--checkpoint")
+#: Real kct flags that are also prefixes of a refused flag, so they are not
+#: mistaken for argparse abbreviations of it.
+_EXACT_FLAGS = frozenset({"--auto", "--check"})
+_OUTPUT_LONG = "--output"
+_OUTPUT_SHORT = "-o"
+
+
+def _abbreviates(opt: str, flag: str) -> bool:
+    """True if ``opt`` is ``flag`` or an argparse-style abbreviation of it."""
+    return len(opt) > 2 and flag.startswith(opt) and opt not in _EXACT_FLAGS
+
+
+def _check_output_flags(argv: list[str]) -> None:
+    """Refuse flags that send kct's output anywhere but ``{board}`` (issue #59).
+
+    ``-o``/``--output`` is allowed only with the value exactly ``{board}``, in any
+    spelling (``-o {board}``, ``-o{board}``, ``--output {board}``,
+    ``--output={board}``, or an abbreviation of ``--output``).
+    """
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--":
+            return
+        if arg.startswith("--"):
+            opt, eq, inline = arg.partition("=")
+            for flag in REDIRECT_FLAGS:
+                if _abbreviates(opt, flag):
+                    raise E.invalid_argument(
+                        f"{flag} makes kct write somewhere other than the open board, "
+                        "so the handoff would report success while KiCad's board is "
+                        "unchanged. It is not allowed in run_kct_handoff.",
+                        got=arg,
+                    )
+            if _abbreviates(opt, _OUTPUT_LONG):
+                value = inline if eq else (argv[i + 1] if i + 1 < len(argv) else None)
+                _check_output_value(arg, value)
+                i += 1 if eq else 2
+                continue
+        elif arg.startswith(_OUTPUT_SHORT):
+            inline = arg[len(_OUTPUT_SHORT) :]
+            value = inline if inline else (argv[i + 1] if i + 1 < len(argv) else None)
+            _check_output_value(arg, value)
+            i += 1 if inline else 2
+            continue
+        i += 1
+
+
+def _check_output_value(arg: str, value: str | None) -> None:
+    if value != BOARD_TOKEN:
+        raise E.invalid_argument(
+            f"{arg.partition('=')[0]} must be exactly {BOARD_TOKEN}: the handoff only "
+            "reloads the board KiCad has open, so kct must write its result there.",
+            got=value,
+        )
 
 
 def _allowed() -> list[str]:

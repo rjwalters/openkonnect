@@ -89,6 +89,65 @@ def test_allow_list_accepts_leading_kct_and_subcommands():
     assert validate_command(["fix-vias", "--output={board}", "{board}"])
 
 
+# -- flags that write elsewhere (issue #59) ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["route", "--auto-layers", "{board}"],
+        ["route", "{board}", "--auto-layers", "-o", "{board}"],
+        ["route", "--auto-l", "{board}"],
+        ["route-auto", "--checkpoint", "x", "{board}"],
+        ["optimize-placement", "--checkpoint=x", "{board}"],
+        ["route", "{board}", "-o", "other.kicad_pcb"],
+        ["route", "{board}", "-oother.kicad_pcb"],
+        ["route", "{board}", "--output=other.kicad_pcb"],
+        ["route", "{board}", "--output", "other.kicad_pcb"],
+        ["route", "{board}", "--out", "other.kicad_pcb"],
+        ["route", "{board}", "-o", "{board}.bak"],
+        ["route", "{board}", "-o"],
+        ["route", "{board}", "-o", "{board}", "--output", "other.kicad_pcb"],
+    ],
+)
+def test_output_redirecting_flags_are_invalid_and_touch_nothing(tmp_path, command):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    kct = FakeKct()
+    r = handoff(make_session(fake), kct, command=command, allow_save=True)
+    assert r["ok"] is False
+    assert r["error"]["code"] == "invalid_argument"
+    assert r["failed_step"] == "validate"
+    assert fake.calls == []
+    assert kct.calls == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["route", "{board}", "-o", "{board}"],
+        ["route", "{board}", "-o{board}"],
+        ["route", "{board}", "--output", "{board}"],
+        ["route", "{board}", "--output={board}"],
+        ["route", "{board}", "--auto", "-o", "{board}"],
+        ["fix-drc", "{board}", "--check"],
+        ["route", "{board}"],
+    ],
+)
+def test_output_to_the_board_is_accepted(command):
+    assert validate_command(command) == command
+
+
+def test_output_to_the_board_runs_the_handoff(tmp_path):
+    ref = board_on_disk(tmp_path)
+    kct = FakeKct()
+    command = ["route", "{board}", "--output", "{board}"]
+    r = handoff(make_session(SyncFake(ref)), kct, command=command, allow_save=True)
+    assert r["ok"] is True, r
+    assert len(kct.calls) == 1
+    assert kct.calls[0][0][1:] == ["route", ref.path, "--output", ref.path]
+
+
 # -- the protocol -----------------------------------------------------------------
 
 
