@@ -84,7 +84,12 @@ def test_not_allow_listed_is_invalid_argument_and_touches_nothing(tmp_path, comm
 
 
 def test_allow_list_accepts_leading_kct_and_subcommands():
-    assert validate_command(["kct", "route", "{board}"]) == ["route", "{board}"]
+    assert validate_command(["kct", "route", "{board}", "-o", "{board}"]) == [
+        "route",
+        "{board}",
+        "-o",
+        "{board}",
+    ]
     assert validate_command(["zones", "fill", "{board}"])[0] == "zones"
     assert validate_command(["fix-vias", "--output={board}", "{board}"])
 
@@ -137,11 +142,41 @@ def test_output_redirecting_flags_are_invalid_and_touch_nothing(tmp_path, comman
         ["fix-vias", "{board}", "--c", "1"],
         ["optimize-traces", "{board}", "--ch", "0.2"],
         ["place-silk-refs", "{board}", "--a"],
-        ["route", "{board}"],
+        ["route", "{board}", "--out", "{board}"],
+        ["route-auto", "{board}", "--net", "X", "-o", "{board}"],
+        ["fix-vias", "{board}"],
+        ["zones", "fill", "{board}"],
+        ["optimize-traces", "{board}"],
     ],
 )
 def test_output_to_the_board_is_accepted(command):
     assert validate_command(command) == command
+
+
+# -- subcommands that need -o {board} (issue #63) ---------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["route", "{board}"],
+        ["kct", "route", "{board}", "--resume"],
+        ["route-auto", "{board}", "--net", "X"],
+        # After "--", -o is a positional, not the output flag.
+        ["route", "{board}", "--", "-o", "{board}"],
+    ],
+)
+def test_route_without_output_on_the_board_is_invalid_and_touches_nothing(tmp_path, command):
+    ref = board_on_disk(tmp_path)
+    fake = SyncFake(ref)
+    kct = FakeKct()
+    r = handoff(make_session(fake), kct, command=command, allow_save=True)
+    assert r["ok"] is False
+    assert r["error"]["code"] == "invalid_argument"
+    assert r["failed_step"] == "validate"
+    assert "-o {board}" in r["error"]["message"]
+    assert fake.calls == []
+    assert kct.calls == []
 
 
 def test_output_to_the_board_runs_the_handoff(tmp_path):

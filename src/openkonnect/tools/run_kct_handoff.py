@@ -56,7 +56,9 @@ DESCRIPTION = (
     "reload refuse with document_dirty, and nothing is lost; discard_unsaved=true reloads "
     "anyway and discards that edit. command is an argv list without 'kct', and must "
     "contain the token {board}, which is replaced by the board's path, e.g. "
-    '["route", "{board}", "-o", "{board}"]. Board only on KiCad 10.'
+    '["route", "{board}", "-o", "{board}"]. route and route-auto must include '
+    "-o {board}, because without it they do not write the open board. Board only on "
+    "KiCad 10."
 )
 
 #: kct write commands the handoff may run, by leading argv tokens. Anything else
@@ -158,13 +160,22 @@ def validate_command(command: Any) -> list[str]:
             "the open board's path, so the command writes the file KiCad has open.",
             got=argv,
         )
-    _check_output_flags(argv)
+    if not _check_output_flags(argv) and argv[0] in REQUIRES_OUTPUT:
+        raise E.invalid_argument(
+            f"kct {argv[0]} needs -o {BOARD_TOKEN}: without it, it does not write the open "
+            "board (route writes <stem>_routed.kicad_pcb, route-auto saves nothing), so "
+            f"the handoff would report success while KiCad's board is unchanged. Add "
+            f"-o {BOARD_TOKEN} to the command.",
+            got=argv,
+        )
     return argv
 
 
 #: Flags that make kct write somewhere other than the open board (issue #59):
-#: ``--auto-layers`` can write ``<stem>_4layer.kicad_pcb`` and still exit 0, and
-#: ``--checkpoint`` writes extra state files. Refused outright, but only on the
+#: ``--checkpoint`` writes extra state files. ``--auto-layers`` is refused too; in
+#: kicad-tools 0.24.0 it is on by default and honors the output path exactly
+#: (no ``_4layer`` file), so the refusal is a harmless guard against older
+#: versions that wrote ``<stem>_4layer.kicad_pcb``. Refused outright, but only on the
 #: subcommands that define them, so a valid abbreviation of some other flag on
 #: another subcommand (``fix-vias --c 1`` is ``--copper``) is not refused.
 REDIRECT_FLAGS: dict[str, frozenset[str]] = {
@@ -173,26 +184,36 @@ REDIRECT_FLAGS: dict[str, frozenset[str]] = {
 }
 _OUTPUT_LONG = "--output"
 
+#: Subcommands that do not write the board in place when ``-o`` is absent
+#: (issue #63), so a handoff must pass ``-o {board}``. In kicad-tools 0.24.0
+#: ``route`` writes ``<stem>_routed.kicad_pcb`` and ``route-auto`` saves nothing;
+#: every other allow-listed command writes the input board when ``-o`` is absent.
+REQUIRES_OUTPUT: frozenset[str] = frozenset({"route", "route-auto"})
+
 
 def _abbreviates(opt: str, flag: str) -> bool:
     """True if ``opt`` is ``flag`` or an argparse-style abbreviation of it."""
     return len(opt) > 2 and flag.startswith(opt)
 
 
-def _check_output_flags(argv: list[str]) -> None:
+def _check_output_flags(argv: list[str]) -> bool:
     """Refuse flags that send kct's output anywhere but ``{board}`` (issue #59).
 
     ``-o``/``--output`` is allowed only with the value exactly ``{board}``, in any
     spelling (``-o {board}``, ``-o{board}``, ``--output {board}``,
     ``--output={board}``, an abbreviation of ``--output``, or ``-o`` inside a
     cluster of short flags such as ``-vo {board}`` or ``-qo{board}``).
+
+    Returns True if an output flag (necessarily ``{board}``) was given before
+    any ``--``.
     """
     subcommand = argv[0]
+    seen_output = False
     i = 0
     while i < len(argv):
         arg = argv[i]
         if arg == "--":
-            return
+            return seen_output
         if arg.startswith("--"):
             opt, eq, inline = arg.partition("=")
             for flag, subcommands in REDIRECT_FLAGS.items():
@@ -206,6 +227,7 @@ def _check_output_flags(argv: list[str]) -> None:
             if _abbreviates(opt, _OUTPUT_LONG):
                 value = inline if eq else (argv[i + 1] if i + 1 < len(argv) else None)
                 _check_output_value(arg, value)
+                seen_output = True
                 i += 1 if eq else 2
                 continue
         elif arg.startswith("-") and len(arg) > 1 and "o" in arg[1:]:
@@ -214,9 +236,11 @@ def _check_output_flags(argv: list[str]) -> None:
             inline = arg[arg.index("o", 1) + 1 :]
             value = inline if inline else (argv[i + 1] if i + 1 < len(argv) else None)
             _check_output_value(arg, value)
+            seen_output = True
             i += 1 if inline else 2
             continue
         i += 1
+    return seen_output
 
 
 def _check_output_value(arg: str, value: str | None) -> None:

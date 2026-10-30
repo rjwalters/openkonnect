@@ -416,9 +416,15 @@ control, and grouping edits into transactions. Every entry here is live-editor.
   - a refusal or failure at any step stops the sequence and names the step;
   - a command missing from the allow-list gives `invalid_argument`;
   - a flag that makes the command write somewhere other than the open board
-    gives `invalid_argument` before KiCad is contacted (#59): `--auto-layers`,
-    `--checkpoint`, and `-o`/`--output` with any value other than exactly
-    `{board}`;
+    gives `invalid_argument` before KiCad is contacted (#59): `--checkpoint`,
+    `-o`/`--output` with any value other than exactly `{board}`, and
+    `--auto-layers` (kept as a guard: kicad-tools 0.24.0 honors the output
+    path with it, which is on by default);
+  - `route` or `route-auto` without `-o {board}` (or another spelling of it)
+    gives `invalid_argument` before KiCad is contacted (#63): without it,
+    kicad-tools 0.24.0 `route` writes `<stem>_routed.kicad_pcb` and
+    `route-auto` saves nothing, so the open board would be unchanged. The
+    other allow-listed commands write the board in place without `-o`;
   - a command that runs past the timeout is stopped. The file state is then
     reported as found, and the editor is not reloaded;
   - the user edits during step 3: step 6 refuses with `document_dirty`,

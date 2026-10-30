@@ -245,7 +245,11 @@ def test_file_tools_refuse_an_unsaved_board_as_no_document(tool):
             raise AssertionError("kct ran on an unsaved board")
 
         r = run_kct_handoff(
-            session, ["route", "{board}"], runner=runner, kct="/bin/kct", allow_save=True
+            session,
+            ["route", "{board}", "-o", "{board}"],
+            runner=runner,
+            kct="/bin/kct",
+            allow_save=True,
         )
     assert r["ok"] is False
     assert r["error"]["code"] == "no_document"
