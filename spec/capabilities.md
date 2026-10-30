@@ -415,6 +415,10 @@ control, and grouping edits into transactions. Every entry here is live-editor.
 - **Failure modes:**
   - a refusal or failure at any step stops the sequence and names the step;
   - a command missing from the allow-list gives `invalid_argument`;
+  - a flag that makes the command write somewhere other than the open board
+    gives `invalid_argument` before KiCad is contacted (#59): `--auto-layers`,
+    `--checkpoint`, and `-o`/`--output` with any value other than exactly
+    `{board}`;
   - a command that runs past the timeout is stopped. The file state is then
     reported as found, and the editor is not reloaded;
   - the user edits during step 3: step 6 refuses with `document_dirty`,

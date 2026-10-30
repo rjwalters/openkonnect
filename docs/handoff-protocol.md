@@ -443,6 +443,14 @@ allow-list of known board-writing commands (`KCT_ALLOW_LIST` in
 `repair-clearance` and `place-silk-refs`. Anything else gives
 `invalid_argument` before KiCad is contacted.
 
+Flags that make `kct` write somewhere other than the open board also give
+`invalid_argument` before KiCad is contacted (#59), because the command could
+exit 0 while the board KiCad has open stays unchanged: `--auto-layers`,
+`--checkpoint` (each only on the subcommands that define it), and `-o`/`--output` with any value other than exactly
+`{board}`. All spellings are checked (`-o X`, `-oX`, `--output X`,
+`--output=X`, `-o` inside a short-flag cluster such as `-vo X` or `-qoX`, and
+abbreviations such as `--out` or `--auto-l`).
+
 Each IPC step runs under the normal per-call bound (`--timeout`). The command
 runs under `timeout_s`. The session's connection is not held while it runs, so
 other tools stay responsive.
@@ -476,7 +484,7 @@ versions may write other files. `<stem>` is the board's file name without
 | `<stem>.search_failures.json` | Only when a net's search failed. A route with no failures deletes an old one | no |
 | `<stem>_partial.kicad_pcb`, with `_partial` copies of the sidecars above | Only when the route is interrupted or times out | no |
 | `<stem>.timeout.json` | Only when the route runs out of its `--timeout` deadline | no |
-| `<stem>_4layer.kicad_pcb` / `<stem>_6layer.kicad_pcb` | Only with `--auto-layers`, when it adds layers. The routed board then goes to this file, not to the board KiCad has open | no |
+| `<stem>_4layer.kicad_pcb` / `<stem>_6layer.kicad_pcb` | Only with `--auto-layers`, when it adds layers. The routed board then goes to this file, not to the board KiCad has open. `run_kct_handoff` refuses `--auto-layers`, so not in a handoff | no |
 
 "Seen live" means the file appeared when `kct route` ran through
 `run_kct_handoff` on `tests/fixtures/selection.kicad_pcb` with KiCad 10.0.7
@@ -487,12 +495,13 @@ rewritten, not created.
 (`-o {board}`), write only the board, apart from these opt-in cases:
 
 - `route-auto --checkpoint <file>` writes the checkpoint board and its
-  `.checkpoint.json` at the path you give. `route-auto --lint-gate` moves a
+  `.checkpoint.json` at the path you give. `run_kct_handoff` refuses
+  `--checkpoint`, so not in a handoff. `route-auto --lint-gate` moves a
   routed board that fails the gate to `<stem>.lint-rejected.kicad_pcb`. Its
   staging directory, `.<board name>.lint-gate-<pid>-<random>/`, is left beside
   the board only if the run is killed. The next gated run removes it.
 - `optimize-placement --checkpoint <dir>` saves the optimizer's state in
-  `<dir>`.
+  `<dir>`. Refused in a handoff, as above.
 - `fix-drc --transactional` keeps a failed attempt as
   `<board name>.failed-<UTC timestamp>.kicad_pcb`, for example
   `board.kicad_pcb.failed-20261029T120000Z.kicad_pcb`, and restores the board.
