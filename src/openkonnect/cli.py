@@ -57,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     _add_connection_args(serve)
     status = sub.add_parser("status", help="print session_status as JSON and exit")
     _add_connection_args(status)
+    instances = sub.add_parser("list-instances", help="print list_instances as JSON and exit")
+    _add_connection_args(instances)
 
     args = parser.parse_args(argv)
     try:
@@ -71,6 +73,14 @@ def main(argv: list[str] | None = None) -> int:
         json.dump(result, sys.stdout, indent=2, default=str)
         sys.stdout.write("\n")
         return 0 if result["ok"] else 1
+
+    if args.command == "list-instances":
+        from .tools.list_instances import list_instances
+
+        result = list_instances(session)
+        json.dump(result, sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+        return 0
 
     from .server import build_server
 
