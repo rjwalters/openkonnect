@@ -864,11 +864,16 @@ state, including unsaved changes. Every edit follows C-6.
   **From:** ROADMAP Phase 1
 - **Purpose:** list the nets and their net classes, and optionally the items
   on a net.
-- **Inputs:** an optional net-name pattern or net class; `include_items`.
-- **Outputs:** per net: its name, its net class, and its pad count. When asked,
-  the items on it, by reference.
+- **Inputs:** an optional net-name pattern (a case-sensitive glob, e.g.
+  `VIN*`) or net class (exact name); `include_items`.
+- **Outputs:** per net: its name, its net class, and its pad count (the
+  unnamed net is left out). When asked, the items on it, by reference: pads as
+  `REF.PAD`, other copper with a session-scoped ID (the SES-08 forms). A filter
+  that matches nothing is an empty list, not an error.
 - **Failure modes:** `no_document`. `include_items` below 10.0.1 gives
   `unsupported_on_this_kicad`.
+- **Status:** built. Net classes come from kicad-python's
+  `Board.get_netclass_for_nets`.
 - **Sources:** P-D3, P-T7.
 
 ### LAY-05 `list_copper`

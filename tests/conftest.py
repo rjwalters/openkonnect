@@ -298,6 +298,7 @@ class EditorFake(FakeBackend):
         selected: list[str] | None = None,
         undescribed: dict[str, int] | None = None,
         text: str | None = None,
+        net_classes: dict[str, str] | None = None,
         **script: Any,
     ) -> None:
         script.setdefault(
@@ -308,6 +309,8 @@ class EditorFake(FakeBackend):
         self.selected: list[str] = list(selected or [])
         self.undescribed = dict(undescribed or {})
         self.text = text
+        #: net name -> net class name; KiCad keeps classes in the project, not the board file.
+        self.net_classes = net_classes if net_classes is not None else {"VIN": "Power"}
         self.set_calls: list[list[str]] = []
 
     def items_by_id(self) -> dict[str, dict[str, Any]]:
@@ -344,6 +347,25 @@ class EditorFake(FakeBackend):
     def board_index(self, ref: BoardRef) -> dict[str, Any]:
         self.calls.append("board_index")
         return self.index
+
+    def nets(self, ref: BoardRef, include_items: bool = False) -> dict[str, Any]:
+        self.calls.append("nets")
+        out = []
+        for name in self.index["nets"]:
+            items = [
+                {k: v for k, v in it.items() if k in ("id", "kind", "ref", "pad")}
+                for it in self.items_by_id().values()
+                if it.get("net") == name and it["kind"] != "footprint"
+            ]
+            entry: dict[str, Any] = {
+                "name": name,
+                "net_class": self.net_classes.get(name, "Default"),
+                "pad_count": sum(1 for it in items if it["kind"] == "pad"),
+            }
+            if include_items:
+                entry["items"] = items
+            out.append(entry)
+        return {"nets": out}
 
     def set_selection(self, ref: BoardRef, ids: list[str]) -> None:
         self.calls.append("set_selection")
