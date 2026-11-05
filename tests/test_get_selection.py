@@ -181,3 +181,31 @@ def test_kipy_backend_maps_every_selection_kind():
     from openkonnect.backend import SELECTION_KINDS, _kind_types
 
     assert set(_kind_types()) == set(SELECTION_KINDS)
+
+
+def test_describe_footprint_carries_the_lay02_details():
+    fp = board_types_pb2.FootprintInstance()
+    fp.id.value = "fp-a"
+    fp.reference_field.text.text.text = "U7"
+    fp.value_field.text.text.text = "STM32"
+    fp.orientation.value_degrees = 90.0
+    fp.locked = base_types_pb2.LockedState.LS_LOCKED
+    fp.layer = board_types_pb2.BoardLayer.BL_B_Cu
+    fp.definition.id.library_nickname = "Package_QFP"
+    fp.definition.id.entry_name = "LQFP-48"
+    fp.attributes.do_not_populate = True
+    fp.attributes.mounting_style = board_types_pb2.FootprintMountingStyle.FMS_SMD
+    extra = fp.definition.items.add()
+    extra.Pack(board_types_pb2.Field(name="MPN", text=board_types_pb2.BoardText()))
+    from kipy.board_types import FootprintInstance
+
+    d = _describe(FootprintInstance(fp), "footprint", {})
+    assert d["value"] == "STM32"
+    assert d["library_id"] == "Package_QFP:LQFP-48"
+    assert d["orientation_deg"] == 90.0
+    assert d["locked"] is True
+    assert d["layer"] == "B.Cu"
+    assert d["attributes"]["do_not_populate"] is True
+    assert d["attributes"]["mounting"] == "smd"
+    assert d["attributes"]["exclude_from_bom"] is False
+    assert d["fields"] == {}

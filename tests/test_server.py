@@ -29,6 +29,7 @@ def test_tool_list():
     assert sorted(by_name) == [
         "board_summary",
         "get_selection",
+        "list_footprints",
         "list_instances",
         "list_nets",
         "run_kct_handoff",
@@ -41,6 +42,7 @@ def test_tool_list():
         "board_summary",
         "session_status",
         "get_selection",
+        "list_footprints",
         "list_instances",
         "list_nets",
     ):
@@ -99,3 +101,11 @@ def test_show_findings_over_mcp_accepts_a_kct_json_object():
     payload = result.structuredContent
     assert payload["selection"]["footprints"] == ["R2"]
     assert [u["part"] for u in payload["unsupported"]] == ["highlight"]
+
+
+def test_list_footprints_over_mcp():
+    from .conftest import EditorFake
+
+    _, result = _call(make_session(EditorFake()), "list_footprints")
+    assert result.isError is False
+    assert [f["ref"] for f in result.structuredContent["footprints"]] == ["R1", "R2", "R3"]

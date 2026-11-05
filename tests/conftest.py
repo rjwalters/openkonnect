@@ -253,6 +253,18 @@ def selection_board_index() -> dict[str, Any]:
                 "position_nm": _pt(x, y),
                 "bbox_nm": _box(x - 1.5, y - 0.6, x + 1.5, y + 0.6),
                 "pads": pads,
+                "value": "10k",
+                "library_id": "openkonnect:R_Fixture",
+                "orientation_deg": 0.0,
+                "locked": False,
+                "attributes": {
+                    "do_not_populate": False,
+                    "exclude_from_bom": False,
+                    "exclude_from_position_files": False,
+                    "not_in_schematic": False,
+                    "mounting": "smd",
+                },
+                "fields": {},
             }
         )
     w = 0.125
