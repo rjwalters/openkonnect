@@ -60,6 +60,7 @@ For clients configured with JSON (Claude Desktop, Cursor and similar):
 | Tool | Spec | What it returns |
 |------|------|-----------------|
 | `session_status` | SES-01 | Whether KiCad is running and its API reachable, versions, instance, project directory, open documents with dirty state, and which tools this instance supports. "Not running" and "API disabled" come back as data, not errors. |
+| `list_instances` | SES-02 | Every KiCad instance whose API socket can be found: endpoint, process id, whether it answered, KiCad version, open board path, and why not if it did not answer. No sockets is an empty list; a platform that cannot list sockets says `listable: false`. Sockets are probed one at a time, each bounded by the call timeout. |
 | `board_summary` | LAY-01 | Live overview of the open board, unsaved changes included: path, title block, layer counts, counts of footprints, nets, tracks, vias and zones, outline size, dirty state. |
 | `get_selection` | SES-08 | What is selected in the PCB editor, as file-level references `kct` accepts (reference designators, `REF.PAD`, nets), plus other items with session-scoped ids and the selection's bounding box. An empty selection is an ordinary result. |
 | `list_nets` | LAY-04 | The nets on the open board with each net's net class and pad count; optional glob `pattern` and `net_class` filters. `include_items` adds the items on each net (pads as `REF.PAD`, other copper with session ids) and needs KiCad 10.0.1, else `unsupported_on_this_kicad`. |
