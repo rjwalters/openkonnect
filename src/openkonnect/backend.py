@@ -81,7 +81,8 @@ class IpcBackend(Protocol):
 
         Returns ``{"footprints": [...], "copper": [...], "nets": [...],
         "outline_nm": box | None}``; items use the same dict form as
-        :meth:`selection`.
+        :meth:`selection`. A footprint item also carries ``value``, ``library_id``,
+        ``orientation_deg``, ``locked``, ``attributes`` and ``fields`` (LAY-02).
         """
         ...
 
@@ -543,6 +544,38 @@ def _pad_owners(footprints: list[Any]) -> dict[str, tuple[str, str]]:
     return owners
 
 
+def _footprint_details(fp: Any) -> dict[str, Any]:
+    """The LAY-02 extras of a footprint: value, library ID, rotation, lock, attributes, fields."""
+    from kipy.board_types import Field
+    from kipy.proto.board import board_types_pb2 as bt
+
+    lib = fp.definition.id
+    library_id = f"{lib.library}:{lib.name}" if lib.library else (lib.name or None)
+    attrs = fp.attributes
+    mounting = {
+        bt.FootprintMountingStyle.FMS_SMD: "smd",
+        bt.FootprintMountingStyle.FMS_THROUGH_HOLE: "through_hole",
+    }.get(attrs.mounting_style)
+    fields: dict[str, str] = {}
+    for f in (*fp.definition.items, fp.datasheet_field, fp.description_field):
+        if isinstance(f, Field) and f.name and f.text.value:
+            fields[f.name] = f.text.value
+    return {
+        "value": fp.value_field.text.value,
+        "library_id": library_id,
+        "orientation_deg": round(fp.orientation.degrees, 6),
+        "locked": bool(fp.locked),
+        "attributes": {
+            "do_not_populate": bool(attrs.do_not_populate),
+            "exclude_from_bom": bool(attrs.exclude_from_bill_of_materials),
+            "exclude_from_position_files": bool(attrs.exclude_from_position_files),
+            "not_in_schematic": bool(attrs.not_in_schematic),
+            "mounting": mounting,
+        },
+        "fields": fields,
+    }
+
+
 def _describe(item: Any, kind: str, owners: dict[str, tuple[str, str]]) -> dict[str, Any]:
     d: dict[str, Any] = {"id": _item_id(item), "kind": kind, "net": None, "layer": None}
     if kind == "footprint":
@@ -553,6 +586,7 @@ def _describe(item: Any, kind: str, owners: dict[str, tuple[str, str]]) -> dict[
             {"id": p.id.value or None, "number": p.number, "net": _net_name(p.net)}
             for p in item.definition.pads
         ]
+        d.update(_footprint_details(item))
     elif kind == "pad":
         owner = owners.get(d["id"] or "")
         if owner is not None:

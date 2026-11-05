@@ -21,6 +21,7 @@ from . import __version__
 from .session import Session
 from .tools import board_summary as board_summary_mod
 from .tools import get_selection as get_selection_mod
+from .tools import list_footprints as list_footprints_mod
 from .tools import run_kct_handoff as handoff_mod
 from .tools import save_before_external_write as save_mod
 from .tools import session_status as session_status_mod
@@ -79,6 +80,22 @@ def build_server(session: Session | None = None) -> FastMCP:
     )
     async def board_summary() -> CallToolResult:
         return await run(board_summary_mod.board_summary)
+
+    @mcp.tool(
+        name="list_footprints",
+        description=list_footprints_mod.DESCRIPTION,
+        annotations=_READ_ONLY,
+        structured_output=False,
+    )
+    async def list_footprints(
+        refs: list[str] | None = None,
+        side: str | None = None,
+        box: dict[str, Any] | None = None,
+        selected_only: bool = False,
+    ) -> CallToolResult:
+        return await run(
+            lambda s: list_footprints_mod.list_footprints(s, refs, side, box, selected_only)
+        )
 
     @mcp.tool(
         name="get_selection",

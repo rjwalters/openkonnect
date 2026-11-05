@@ -840,6 +840,11 @@ state, including unsaved changes. Every edit follows C-6.
 - **Failure modes:** `no_document`. A filter that matches nothing returns an
   empty list.
 - **Sources:** P-D3, P-T7.
+- **As built:** `box` must name its `frame` (`file` or `board`, C-1) and keeps
+  footprints whose position lies inside it. Any value kipy does not supply on
+  KiCad 10 is reported as `null`, never guessed. Fields are the footprint's
+  named text fields (custom fields, datasheet, description) that have a value;
+  the reference and value are returned as `ref` and `value`.
 
 ### LAY-03 `footprint_pads`
 - **Class:** live-editor · **kicad-tools:** file-level equivalent already in
