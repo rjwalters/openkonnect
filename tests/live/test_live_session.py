@@ -53,3 +53,13 @@ def test_board_summary_matches_fixture(live_session):
     assert r["counts"]["zones"] == 0
     assert r["outline"]["width_mm"] == pytest.approx(30.0, abs=0.2)
     assert r["outline"]["height_mm"] == pytest.approx(20.0, abs=0.2)
+
+
+def test_list_instances_lists_running_kicad(live_session):
+    from openkonnect.tools.list_instances import list_instances
+
+    r = list_instances(live_session)
+    assert r["ok"] is True
+    answered = [i for i in r["instances"] if i["answered"]]
+    assert answered, r
+    assert answered[0]["kicad_version"].startswith("10.")
