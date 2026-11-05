@@ -5,6 +5,7 @@ File sync (#4): ``save_before_external_write`` (SES-04), ``sync_from_disk``
 (SES-05) and ``run_kct_handoff`` (SES-06).
 Selection and findings (#5): ``get_selection`` (SES-08, read-only) and
 ``show_findings`` (SES-09, changes only the editor selection).
+``list_nets`` (LAY-04, read-only).
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from .session import Session
 from .tools import board_summary as board_summary_mod
 from .tools import get_selection as get_selection_mod
 from .tools import list_instances as list_instances_mod
+from .tools import list_nets as list_nets_mod
 from .tools import run_kct_handoff as handoff_mod
 from .tools import save_before_external_write as save_mod
 from .tools import session_status as session_status_mod
@@ -106,6 +108,19 @@ def build_server(session: Session | None = None) -> FastMCP:
         include_geometry: bool = False,
     ) -> CallToolResult:
         return await run(lambda s: get_selection_mod.get_selection(s, kinds, include_geometry))
+
+    @mcp.tool(
+        name="list_nets",
+        description=list_nets_mod.DESCRIPTION,
+        annotations=_READ_ONLY,
+        structured_output=False,
+    )
+    async def list_nets(
+        pattern: str | None = None,
+        net_class: str | None = None,
+        include_items: bool = False,
+    ) -> CallToolResult:
+        return await run(lambda s: list_nets_mod.list_nets(s, pattern, net_class, include_items))
 
     @mcp.tool(
         name="show_findings",

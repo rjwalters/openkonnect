@@ -85,6 +85,16 @@ class IpcBackend(Protocol):
         """
         ...
 
+    def nets(self, ref: BoardRef, include_items: bool = False) -> dict[str, Any]:
+        """The board's nets (LAY-04), as plain data.
+
+        Returns ``{"nets": [{"name", "net_class", "pad_count", "items"?}, ...]}``.
+        ``net_class`` is the name of the net's class (None if KiCad reports none).
+        With ``include_items``, ``items`` lists the pads (``kind: "pad"``, ``ref``,
+        ``pad``, ``id``) and copper (``kind``, ``id``) on the net.
+        """
+        ...
+
     def set_selection(self, ref: BoardRef, ids: list[str]) -> None:
         """Replace the editor selection with the items whose session IDs are ``ids``."""
         ...
@@ -267,6 +277,9 @@ class KipyBackend:
 
     def board_index(self, ref: BoardRef) -> dict[str, Any]:
         return _board_index(self, ref)
+
+    def nets(self, ref: BoardRef, include_items: bool = False) -> dict[str, Any]:
+        return _nets(self, ref, include_items)
 
     def set_selection(self, ref: BoardRef, ids: list[str]) -> None:
         _set_selection(self, ref, ids)
@@ -667,6 +680,43 @@ def _board_index(self: KipyBackend, ref: BoardRef) -> dict[str, Any]:
     nets = [n.name for n in board.get_nets() if n.name]
     _, outline = _edge_outline(board)
     return {"footprints": fps, "copper": cu, "nets": nets, "outline_nm": outline}
+
+
+def _nets(self: KipyBackend, ref: BoardRef, include_items: bool = False) -> dict[str, Any]:
+    board = self._board(ref)
+    nets = [n for n in board.get_nets() if n.name]
+    classes = board.get_netclass_for_nets(nets) if nets else {}
+    pads = list(board.get_pads())
+    pad_counts: dict[str, int] = {}
+    for p in pads:
+        name = _net_name(p.net)
+        if name:
+            pad_counts[name] = pad_counts.get(name, 0) + 1
+    items: dict[str, list[dict[str, Any]]] = {}
+    if include_items:
+        owners = _pad_owners(list(board.get_footprints()))
+        for p in pads:
+            d = _describe(p, "pad", owners)
+            if d["net"]:
+                items.setdefault(d["net"], []).append(
+                    {k: d[k] for k in ("id", "kind", "ref", "pad") if k in d}
+                )
+        for c in [*board.get_tracks(), *board.get_vias(), *board.get_zones()]:
+            net = _net_name(c.net)
+            if net:
+                items.setdefault(net, []).append({"id": _item_id(c), "kind": _kind_of(c)})
+    out = []
+    for n in nets:
+        cls = classes.get(n.name)
+        entry: dict[str, Any] = {
+            "name": n.name,
+            "net_class": (cls.name or None) if cls is not None else None,
+            "pad_count": pad_counts.get(n.name, 0),
+        }
+        if include_items:
+            entry["items"] = items.get(n.name, [])
+        out.append(entry)
+    return {"nets": out}
 
 
 def _set_selection(self: KipyBackend, ref: BoardRef, ids: list[str]) -> None:

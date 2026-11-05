@@ -30,13 +30,20 @@ def test_tool_list():
         "board_summary",
         "get_selection",
         "list_instances",
+        "list_nets",
         "run_kct_handoff",
         "save_before_external_write",
         "session_status",
         "show_findings",
         "sync_from_disk",
     ]
-    for name in ("board_summary", "session_status", "get_selection", "list_instances"):
+    for name in (
+        "board_summary",
+        "session_status",
+        "get_selection",
+        "list_instances",
+        "list_nets",
+    ):
         assert by_name[name].annotations.readOnlyHint is True
     # show_findings changes only the editor selection: not read-only, not destructive.
     assert by_name["show_findings"].annotations.readOnlyHint is False
