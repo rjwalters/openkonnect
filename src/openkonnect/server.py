@@ -1,6 +1,6 @@
 """The MCP server.
 
-Read-only: ``session_status`` (SES-01) and ``board_summary`` (LAY-01).
+Read-only: ``session_status`` (SES-01), ``list_instances`` (SES-02) and ``board_summary`` (LAY-01).
 File sync (#4): ``save_before_external_write`` (SES-04), ``sync_from_disk``
 (SES-05) and ``run_kct_handoff`` (SES-06).
 Selection and findings (#5): ``get_selection`` (SES-08, read-only) and
@@ -21,6 +21,7 @@ from . import __version__
 from .session import Session
 from .tools import board_summary as board_summary_mod
 from .tools import get_selection as get_selection_mod
+from .tools import list_instances as list_instances_mod
 from .tools import run_kct_handoff as handoff_mod
 from .tools import save_before_external_write as save_mod
 from .tools import session_status as session_status_mod
@@ -70,6 +71,20 @@ def build_server(session: Session | None = None) -> FastMCP:
     )
     async def session_status() -> CallToolResult:
         return await run(session_status_mod.session_status)
+
+    @mcp.tool(
+        name="list_instances",
+        description=list_instances_mod.DESCRIPTION,
+        annotations=_READ_ONLY,
+        structured_output=False,
+    )
+    async def list_instances(socket: str | None = None) -> CallToolResult:
+        # Not wrapped in run_tool: each socket is bounded by timeout_s on its own.
+        payload = await anyio.to_thread.run_sync(
+            lambda: list_instances_mod.list_instances(session, socket),
+            abandon_on_cancel=True,
+        )
+        return _to_result(payload)
 
     @mcp.tool(
         name="board_summary",
