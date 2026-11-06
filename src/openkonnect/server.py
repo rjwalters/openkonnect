@@ -5,7 +5,7 @@ File sync (#4): ``save_before_external_write`` (SES-04), ``sync_from_disk``
 (SES-05) and ``run_kct_handoff`` (SES-06).
 Selection and findings (#5): ``get_selection`` (SES-08, read-only) and
 ``show_findings`` (SES-09, changes only the editor selection).
-``list_nets`` (LAY-04, read-only).
+``list_nets`` (LAY-04) and ``footprint_pads`` (LAY-03), read-only.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from . import __version__
 from .session import Session
 from .tools import board_summary as board_summary_mod
+from .tools import footprint_pads as footprint_pads_mod
 from .tools import get_selection as get_selection_mod
 from .tools import list_footprints as list_footprints_mod
 from .tools import list_instances as list_instances_mod
@@ -113,6 +114,15 @@ def build_server(session: Session | None = None) -> FastMCP:
         return await run(
             lambda s: list_footprints_mod.list_footprints(s, refs, side, box, selected_only)
         )
+
+    @mcp.tool(
+        name="footprint_pads",
+        description=footprint_pads_mod.DESCRIPTION,
+        annotations=_READ_ONLY,
+        structured_output=False,
+    )
+    async def footprint_pads(refs: list[str]) -> CallToolResult:
+        return await run(lambda s: footprint_pads_mod.footprint_pads(s, refs))
 
     @mcp.tool(
         name="get_selection",

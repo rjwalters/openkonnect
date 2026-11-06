@@ -96,6 +96,19 @@ class IpcBackend(Protocol):
         """
         ...
 
+    def pads(self, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
+        """Pads with their geometry (LAY-03), as plain data.
+
+        Returns ``{"footprints": [ref, ...], "pads": [pad, ...], "outline_nm": box | None}``.
+        ``footprints`` lists every footprint reference on the board. Each pad has ``ref``,
+        ``pad`` (number), ``net`` (name, None if unconnected or unreadable), ``net_state``
+        (``"connected"``, ``"unconnected"`` or ``"unknown"``), ``net_reason`` when unknown,
+        ``position_nm``, ``layers`` (canonical names), ``shape`` and ``size_nm``
+        (``{"x", "y"}``; None if KiCad gives no copper layer). With ``refs``, only pads of
+        those footprints are returned.
+        """
+        ...
+
     def set_selection(self, ref: BoardRef, ids: list[str]) -> None:
         """Replace the editor selection with the items whose session IDs are ``ids``."""
         ...
@@ -281,6 +294,9 @@ class KipyBackend:
 
     def nets(self, ref: BoardRef, include_items: bool = False) -> dict[str, Any]:
         return _nets(self, ref, include_items)
+
+    def pads(self, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
+        return _pads(self, ref, refs)
 
     def set_selection(self, ref: BoardRef, ids: list[str]) -> None:
         _set_selection(self, ref, ids)
@@ -751,6 +767,53 @@ def _nets(self: KipyBackend, ref: BoardRef, include_items: bool = False) -> dict
             entry["items"] = items.get(n.name, [])
         out.append(entry)
     return {"nets": out}
+
+
+def _pad_geometry(pad: Any) -> dict[str, Any]:
+    """Layers, shape and size of a pad, from its padstack (the first copper layer entry)."""
+    from kipy.proto.board.board_types_pb2 import PadStackShape
+
+    stack = pad.padstack
+    layers = [n for n in (_layer_name(lyr) for lyr in stack.layers) if n]
+    shape = size = None
+    copper = stack.copper_layers
+    if copper:
+        shape = PadStackShape.Name(copper[0].shape).removeprefix("PSS_").lower()
+        size = {"x": int(copper[0].size.x), "y": int(copper[0].size.y)}
+    return {"layers": layers, "shape": shape, "size_nm": size}
+
+
+def _pad_net(pad: Any) -> dict[str, Any]:
+    """The pad's net and whether it could be read; unreadable is not unconnected."""
+    try:
+        name = _net_name(pad.net)
+    except Exception as e:  # a net that cannot be decoded must not read as unconnected
+        return {"net": None, "net_state": "unknown", "net_reason": f"{type(e).__name__}: {e}"}
+    if name is None:
+        return {"net": None, "net_state": "unconnected"}
+    return {"net": name, "net_state": "connected"}
+
+
+def _pads(self: KipyBackend, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
+    board = self._board(ref)
+    footprints = list(board.get_footprints())
+    owners = _pad_owners(footprints)
+    wanted = set(refs) if refs is not None else None
+    out = []
+    for p in board.get_pads():
+        owner = owners.get(p.id.value or "")
+        if owner is None or (wanted is not None and owner[0] not in wanted):
+            continue
+        d: dict[str, Any] = {"ref": owner[0], "pad": owner[1], "position_nm": _vec(p.position)}
+        d.update(_pad_net(p))
+        d.update(_pad_geometry(p))
+        out.append(d)
+    _, outline = _edge_outline(board)
+    return {
+        "footprints": [_footprint_ref(fp) for fp in footprints],
+        "pads": out,
+        "outline_nm": outline,
+    }
 
 
 def _set_selection(self: KipyBackend, ref: BoardRef, ids: list[str]) -> None:

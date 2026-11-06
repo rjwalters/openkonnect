@@ -165,6 +165,10 @@ def invalid_argument(message: str, **details: Any) -> OpenKonnectError:
     return OpenKonnectError(ErrorCode.INVALID_ARGUMENT, message, details=details)
 
 
+def not_found(message: str, **details: Any) -> OpenKonnectError:
+    return OpenKonnectError(ErrorCode.NOT_FOUND, message, details=details)
+
+
 def unsupported(message: str, min_kicad: str | None = None, **details: Any) -> OpenKonnectError:
     if min_kicad is not None:
         details = {"min_kicad": min_kicad, **details}

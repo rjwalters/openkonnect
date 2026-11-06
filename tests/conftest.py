@@ -239,6 +239,9 @@ def selection_board_index() -> dict[str, Any]:
                     "pad": num,
                     "net": nets[k],
                     "layer": None,
+                    "layers": ["F.Cu", "F.Mask", "F.Paste"],
+                    "shape": "rectangle",
+                    "size_nm": _pt(1, 1.2),
                     "position_nm": _pt(px, y),
                     "bbox_nm": _box(px - 0.5, y - 0.6, px + 0.5, y + 0.6),
                 }
@@ -312,6 +315,8 @@ class EditorFake(FakeBackend):
         #: net name -> net class name; KiCad keeps classes in the project, not the board file.
         self.net_classes = net_classes if net_classes is not None else {"VIN": "Power"}
         self.set_calls: list[list[str]] = []
+        #: ``REF.PAD`` names whose net the fake cannot read (LAY-03).
+        self.unreadable_nets: set[str] = set()
 
     def items_by_id(self) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
@@ -366,6 +371,27 @@ class EditorFake(FakeBackend):
                 entry["items"] = items
             out.append(entry)
         return {"nets": out}
+
+    def pads(self, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
+        self.calls.append("pads")
+        out = []
+        for fp in self.index["footprints"]:
+            if refs is not None and fp["ref"] not in refs:
+                continue
+            for p in fp["pads"]:
+                d = {k: p[k] for k in ("ref", "pad", "position_nm", "layers", "shape", "size_nm")}
+                if f"{p['ref']}.{p['pad']}" in self.unreadable_nets:
+                    d.update(net=None, net_state="unknown", net_reason="ApiError: net not decoded")
+                elif p["net"]:
+                    d.update(net=p["net"], net_state="connected")
+                else:
+                    d.update(net=None, net_state="unconnected")
+                out.append(d)
+        return {
+            "footprints": [fp["ref"] for fp in self.index["footprints"]],
+            "pads": out,
+            "outline_nm": self.index["outline_nm"],
+        }
 
     def set_selection(self, ref: BoardRef, ids: list[str]) -> None:
         self.calls.append("set_selection")
