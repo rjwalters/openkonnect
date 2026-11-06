@@ -857,6 +857,14 @@ state, including unsaved changes. Every edit follows C-6.
 - **Failure modes:** `not_found`; a pad whose net cannot be read reports its
   net as unknown, not as unconnected.
 - **Sources:** P-D3, P-T7.
+- **As built:** `refs` entries are `REF` (every pad) or `REF.PAD`; the dot splits
+  only where the left side is a footprint on the board. Positions are in the
+  `file` frame, with the `board` frame position and the offset between the two
+  (C-1). Layers are canonical names; shape and size come from the first copper
+  layer of the padstack. Anything unmatched fails the call with `not_found`,
+  listing the unmatched entries and the pads that did resolve. `net_state` is
+  `connected`, `unconnected` (net: null) or `unknown` (net: null, with
+  `net_reason`).
 
 ### LAY-04 `list_nets`
 - **Class:** live-editor · **kicad-tools:** file-level equivalent already in

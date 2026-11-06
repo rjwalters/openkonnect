@@ -28,6 +28,7 @@ def test_tool_list():
     by_name = {t.name: t for t in tools.tools}
     assert sorted(by_name) == [
         "board_summary",
+        "footprint_pads",
         "get_selection",
         "list_footprints",
         "list_instances",
@@ -41,6 +42,7 @@ def test_tool_list():
     for name in (
         "board_summary",
         "session_status",
+        "footprint_pads",
         "get_selection",
         "list_footprints",
         "list_instances",
