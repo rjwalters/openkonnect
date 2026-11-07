@@ -317,6 +317,39 @@ class EditorFake(FakeBackend):
         self.set_calls: list[list[str]] = []
         #: ``REF.PAD`` names whose net the fake cannot read (LAY-03).
         self.unreadable_nets: set[str] = set()
+        #: zones in the backend's ``zones`` form (LAY-06).
+        self.zone_list: list[dict[str, Any]] = [
+            {
+                "id": "zone-1",
+                "kind": "copper",
+                "name": "GND pour",
+                "net": "GND",
+                "layers": ["F.Cu", "B.Cu"],
+                "priority": 1,
+                "pad_connection": "thermal",
+                "filled": True,
+                "locked": False,
+                "keepouts": None,
+            },
+            {
+                "id": "zone-2",
+                "kind": "rule_area",
+                "name": None,
+                "net": None,
+                "layers": ["F.Cu"],
+                "priority": 0,
+                "pad_connection": None,
+                "filled": False,
+                "locked": True,
+                "keepouts": {
+                    "copper": True,
+                    "vias": True,
+                    "tracks": False,
+                    "pads": False,
+                    "footprints": False,
+                },
+            },
+        ]
 
     def items_by_id(self) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
@@ -371,6 +404,10 @@ class EditorFake(FakeBackend):
                 entry["items"] = items
             out.append(entry)
         return {"nets": out}
+
+    def zones(self, ref: BoardRef) -> dict[str, Any]:
+        self.calls.append("zones")
+        return {"zones": [dict(z) for z in self.zone_list]}
 
     def pads(self, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
         self.calls.append("pads")

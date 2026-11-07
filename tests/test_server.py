@@ -33,6 +33,7 @@ def test_tool_list():
         "list_footprints",
         "list_instances",
         "list_nets",
+        "list_zones",
         "run_kct_handoff",
         "save_before_external_write",
         "session_status",
@@ -47,6 +48,7 @@ def test_tool_list():
         "list_footprints",
         "list_instances",
         "list_nets",
+        "list_zones",
     ):
         assert by_name[name].annotations.readOnlyHint is True
     # show_findings changes only the editor selection: not read-only, not destructive.

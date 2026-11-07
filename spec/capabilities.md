@@ -904,8 +904,16 @@ state, including unsaved changes. Every edit follows C-6.
 - **Outputs:** per zone: a session ID, an optional name, net, layers,
   priority, pad-connection style, whether it is filled, and for a rule area
   what it keeps out.
-- **Failure modes:** `no_document`.
+- **Failure modes:** `no_document`; `invalid_argument` for an unknown layer.
 - **Sources:** P-D3, P-T7.
+- **As built:** `net` is an exact net name and `layer` a canonical layer name
+  (a zone matches if it is on that layer). Each zone has `kind` (`copper` or
+  `rule_area`), `id` (session-scoped, `no_file_reference: true`), `name`,
+  `net`, `layers`, `priority`, `pad_connection` (`inherited`, `none`,
+  `thermal`, `full` or `pth_thermal`), `filled` and `locked`. A rule area has
+  no net or pad connection (`null`) and a `keepouts` object with `copper`,
+  `vias`, `tracks`, `pads` and `footprints` booleans; a copper zone has
+  `keepouts: null`. A filter that matches nothing is an empty list.
 
 ### LAY-07 `layers_and_stackup`
 - **Class:** live-editor · **kicad-tools:** file-level equivalent already in
