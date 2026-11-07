@@ -26,6 +26,7 @@ from .tools import get_selection as get_selection_mod
 from .tools import list_footprints as list_footprints_mod
 from .tools import list_instances as list_instances_mod
 from .tools import list_nets as list_nets_mod
+from .tools import list_zones as list_zones_mod
 from .tools import run_kct_handoff as handoff_mod
 from .tools import save_before_external_write as save_mod
 from .tools import session_status as session_status_mod
@@ -148,6 +149,18 @@ def build_server(session: Session | None = None) -> FastMCP:
         include_items: bool = False,
     ) -> CallToolResult:
         return await run(lambda s: list_nets_mod.list_nets(s, pattern, net_class, include_items))
+
+    @mcp.tool(
+        name="list_zones",
+        description=list_zones_mod.DESCRIPTION,
+        annotations=_READ_ONLY,
+        structured_output=False,
+    )
+    async def list_zones(
+        net: str | None = None,
+        layer: str | None = None,
+    ) -> CallToolResult:
+        return await run(lambda s: list_zones_mod.list_zones(s, net, layer))
 
     @mcp.tool(
         name="show_findings",

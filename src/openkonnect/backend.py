@@ -96,6 +96,19 @@ class IpcBackend(Protocol):
         """
         ...
 
+    def zones(self, ref: BoardRef) -> dict[str, Any]:
+        """Copper zones and rule areas (LAY-06), as plain data.
+
+        Returns ``{"zones": [zone, ...]}``. Each zone has ``id`` (session ID), ``kind``
+        (``"copper"``, ``"rule_area"`` or another zone type name), ``name`` (None if
+        unnamed), ``net`` (None for a rule area or an unconnected zone), ``layers``
+        (canonical names), ``priority``, ``pad_connection`` (``"inherited"``, ``"none"``,
+        ``"thermal"``, ``"full"``, ``"pth_thermal"``; None for a rule area), ``filled``,
+        ``locked`` and ``keepouts`` (None for a copper zone; for a rule area a dict of
+        ``copper``, ``vias``, ``tracks``, ``pads``, ``footprints`` booleans).
+        """
+        ...
+
     def pads(self, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
         """Pads with their geometry (LAY-03), as plain data.
 
@@ -294,6 +307,9 @@ class KipyBackend:
 
     def nets(self, ref: BoardRef, include_items: bool = False) -> dict[str, Any]:
         return _nets(self, ref, include_items)
+
+    def zones(self, ref: BoardRef) -> dict[str, Any]:
+        return _zones(self, ref)
 
     def pads(self, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
         return _pads(self, ref, refs)
@@ -767,6 +783,53 @@ def _nets(self: KipyBackend, ref: BoardRef, include_items: bool = False) -> dict
             entry["items"] = items.get(n.name, [])
         out.append(entry)
     return {"nets": out}
+
+
+def _zones(self: KipyBackend, ref: BoardRef) -> dict[str, Any]:
+    from kipy.proto.board.board_types_pb2 import ZoneConnectionStyle, ZoneType
+
+    board = self._board(ref)
+    out = []
+    for z in board.get_zones():
+        rule_area = z.type == ZoneType.ZT_RULE_AREA
+        keepouts = pad_connection = None
+        if rule_area:
+            ra = z.proto.rule_area_settings
+            keepouts = {
+                "copper": bool(ra.keepout_copper),
+                "vias": bool(ra.keepout_vias),
+                "tracks": bool(ra.keepout_tracks),
+                "pads": bool(ra.keepout_pads),
+                "footprints": bool(ra.keepout_footprints),
+            }
+        else:
+            conn = z.connection
+            if conn is not None:
+                pad_connection = (
+                    ZoneConnectionStyle.Name(conn.zone_connection).removeprefix("ZCS_").lower()
+                )
+        kind = (
+            "copper"
+            if z.type == ZoneType.ZT_COPPER
+            else "rule_area"
+            if rule_area
+            else ZoneType.Name(z.type).removeprefix("ZT_").lower()
+        )
+        out.append(
+            {
+                "id": _item_id(z),
+                "kind": kind,
+                "name": z.name or None,
+                "net": None if rule_area else _net_name(z.net),
+                "layers": [n for n in (_layer_name(lyr) for lyr in z.layers) if n],
+                "priority": int(z.priority),
+                "pad_connection": pad_connection,
+                "filled": bool(z.filled),
+                "locked": bool(z.locked),
+                "keepouts": keepouts,
+            }
+        )
+    return {"zones": out}
 
 
 def _pad_geometry(pad: Any) -> dict[str, Any]:
