@@ -905,6 +905,7 @@ state, including unsaved changes. Every edit follows C-6.
   priority, pad-connection style, whether it is filled, and for a rule area
   what it keeps out.
 - **Failure modes:** `no_document`; `invalid_argument` for an unknown layer.
+- **Status:** built.
 - **Sources:** P-D3, P-T7.
 - **As built:** `net` is an exact net name and `layer` a canonical layer name
   (a zone matches if it is on that layer). Each zone has `kind` (`copper` or
