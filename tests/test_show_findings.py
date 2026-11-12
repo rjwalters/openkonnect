@@ -384,7 +384,9 @@ def test_round_trip_footprints_through_kct_check():
     report = kct_json("check", SELECTION_BOARD, "--format", "json")
     assert report["pcb_sha256"] == file_state(SELECTION_BOARD)["sha256"]
     # "check these parts": keep the findings whose items are all selected refs.
-    report["violations"] = [v for v in report["violations"] if set(v["items"]) <= wanted]
+    report["violations"] = [
+        v for v in report["violations"] if v["items"] and set(v["items"]) <= wanted
+    ]
     assert report["violations"], "kct check reported nothing on the selected footprints"
 
     r = show(fake, report)
