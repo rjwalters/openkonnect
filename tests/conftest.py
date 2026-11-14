@@ -350,6 +350,32 @@ class EditorFake(FakeBackend):
                 },
             },
         ]
+        #: the board outline in the backend's ``outline`` form (LAY-08). The default
+        #: is ``tests/fixtures/selection.kicad_pcb``: one 100,50-140,75 mm gr_rect.
+        self.outline_data: dict[str, Any] = {
+            "shape_count": 1,
+            "loops": [
+                {
+                    "closed": True,
+                    "role": "outline",
+                    "points_nm": [
+                        _pt(100, 50),
+                        _pt(140, 50),
+                        _pt(140, 75),
+                        _pt(100, 75),
+                    ],
+                    "source_shapes": 1,
+                    "gap_nm": None,
+                }
+            ],
+            "open_chains": [],
+            "outline_nm": self.index["outline_nm"],
+            "grid_origin_nm": _pt(0, 0),
+            "drill_origin_nm": _pt(0, 0),
+            "origins_reason": None,
+            "chain_tolerance_nm": 10_000,
+            "arc_step_deg": 5.0,
+        }
 
     def items_by_id(self) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
@@ -408,6 +434,10 @@ class EditorFake(FakeBackend):
     def zones(self, ref: BoardRef) -> dict[str, Any]:
         self.calls.append("zones")
         return {"zones": [dict(z) for z in self.zone_list]}
+
+    def outline(self, ref: BoardRef) -> dict[str, Any]:
+        self.calls.append("outline")
+        return dict(self.outline_data)
 
     def pads(self, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
         self.calls.append("pads")

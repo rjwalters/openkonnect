@@ -27,6 +27,7 @@ def test_tool_list():
     tools, _ = _call(make_session(sockets=[], running=False), "session_status")
     by_name = {t.name: t for t in tools.tools}
     assert sorted(by_name) == [
+        "board_outline",
         "board_summary",
         "footprint_pads",
         "get_selection",
@@ -41,6 +42,7 @@ def test_tool_list():
         "sync_from_disk",
     ]
     for name in (
+        "board_outline",
         "board_summary",
         "session_status",
         "footprint_pads",

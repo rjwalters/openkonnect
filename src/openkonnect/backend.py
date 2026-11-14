@@ -109,6 +109,30 @@ class IpcBackend(Protocol):
         """
         ...
 
+    def outline(self, ref: BoardRef) -> dict[str, Any]:
+        """The board outline as polygons, with the extents and KiCad's origins (LAY-08).
+
+        Returns ``{"shape_count", "loops", "open_chains", "outline_nm",
+        "grid_origin_nm", "drill_origin_nm", "origins_reason",
+        "chain_tolerance_nm", "arc_step_deg"}``.
+
+        ``loops`` are the closed rings, ``open_chains`` the pieces that did not
+        close; each is ``{"closed", "role" ("outline" or "hole"),
+        "points_nm": [{"x", "y"}, ...], "source_shapes", "gap_nm"}``. A closed
+        ring does not repeat its first point and has ``gap_nm`` None; an open
+        chain's ``gap_nm`` is the distance from its last point back to its
+        first, so a caller can say what defeated the chain. Arcs, beziers and
+        circles are sampled into segments at ``arc_step_deg``, so a loop that
+        contains one is an approximation. Chaining joins endpoints within
+        ``chain_tolerance_nm``.
+
+        ``outline_nm`` is the extents box :meth:`board_data` reports, on the
+        same basis (geometry, not stroke; board-level shapes only). The origins
+        are ``{"x", "y"}`` in the ``file`` frame, or None with
+        ``origins_reason`` set when this KiCad has no origin query.
+        """
+        ...
+
     def pads(self, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
         """Pads with their geometry (LAY-03), as plain data.
 
@@ -311,6 +335,9 @@ class KipyBackend:
     def zones(self, ref: BoardRef) -> dict[str, Any]:
         return _zones(self, ref)
 
+    def outline(self, ref: BoardRef) -> dict[str, Any]:
+        return _outline(self, ref)
+
     def pads(self, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
         return _pads(self, ref, refs)
 
@@ -460,6 +487,352 @@ def _bezier_extent(p0: Any, p1: Any, p2: Any, p3: Any) -> Extent:
     x0, x1 = axis(p0.x, p1.x, p2.x, p3.x)
     y0, y1 = axis(p0.y, p1.y, p2.y, p3.y)
     return x0, y0, x1, y1
+
+
+# -- board outline polygons (LAY-08, #88) ------------------------------------
+#
+# kipy 0.8.0 has no board-outline helper: ``Board`` offers no
+# ``get_board_outline()`` and ``kipy.geometry`` only measures single arcs. The
+# chaining below is therefore ours. ``kicad-tools``' two implementations were
+# read and deliberately not reused: both fall back to a bounding box (one to a
+# hardcoded 100 x 100 mm board) when chaining fails, which LAY-08 forbids, and
+# both read the sexp file rather than the open editor (C-7). Their greedy
+# endpoint matching and 0.01 mm tolerance are the reference for the tolerance
+# below.
+
+#: Endpoints this far apart or closer are the same point when chaining (0.01 mm).
+#: The value ``kct``'s ``_chain_lines_to_polygon`` uses, so the two agree about
+#: which outlines close.
+_CHAIN_TOLERANCE_NM = 10_000
+
+#: Sampling step for arcs and circles. Curves become polylines because LAY-08
+#: asks for polygons; the step is reported so a consumer knows the loop is an
+#: approximation.
+_ARC_STEP_DEG = 5.0
+
+#: Segments a cubic bezier is sampled into (beziers have no angular measure).
+_BEZIER_STEPS = 24
+
+
+def _pt(p: Any) -> dict[str, int]:
+    return {"x": int(p.x), "y": int(p.y)}
+
+
+def _near(a: dict[str, int], b: dict[str, int], tol: int = _CHAIN_TOLERANCE_NM) -> bool:
+    return abs(a["x"] - b["x"]) <= tol and abs(a["y"] - b["y"]) <= tol
+
+
+def _gap_nm(a: dict[str, int], b: dict[str, int]) -> int:
+    return round(((a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2) ** 0.5)
+
+
+def _arc_points(start: Any, mid: Any, end: Any) -> list[dict[str, int]]:
+    """An arc sampled into points, start and end kept exact.
+
+    The sweep is the one that passes through ``mid``, so the direction KiCad
+    drew is preserved. A degenerate arc (no center) falls back to its three
+    defining points rather than being dropped.
+    """
+    import math
+
+    from kipy.geometry import arc_center, arc_radius
+
+    first, last = _pt(start), _pt(end)
+    center = arc_center(start, mid, end)
+    if center is None:
+        return [first, _pt(mid), last]
+    radius = arc_radius(start, mid, end)
+    if not radius:
+        return [first, _pt(mid), last]
+    cx, cy = float(center.x), float(center.y)
+
+    def angle(p: Any) -> float:
+        return math.atan2(float(p.y) - cy, float(p.x) - cx)
+
+    a0 = angle(start)
+    turn = math.tau
+    to_mid = (angle(mid) - a0) % turn
+    to_end = (angle(end) - a0) % turn
+    if to_end == 0.0:
+        sweep = turn if to_mid > 0 else -turn  # start == end: a full circle
+    elif to_mid <= to_end:
+        sweep = to_end
+    else:
+        sweep = to_end - turn
+    steps = max(2, math.ceil(abs(sweep) / math.radians(_ARC_STEP_DEG)))
+    points = [first]
+    for i in range(1, steps):
+        t = a0 + sweep * i / steps
+        points.append(
+            {"x": round(cx + radius * math.cos(t)), "y": round(cy + radius * math.sin(t))}
+        )
+    points.append(last)
+    return points
+
+
+def _circle_points(center: Any, radius: float) -> list[dict[str, int]]:
+    """A circle sampled into a closed ring (the first point is not repeated)."""
+    import math
+
+    steps = max(8, math.ceil(360.0 / _ARC_STEP_DEG))
+    cx, cy = float(center.x), float(center.y)
+    return [
+        {
+            "x": round(cx + radius * math.cos(math.tau * i / steps)),
+            "y": round(cy + radius * math.sin(math.tau * i / steps)),
+        }
+        for i in range(steps)
+    ]
+
+
+def _bezier_points(p0: Any, p1: Any, p2: Any, p3: Any) -> list[dict[str, int]]:
+    """A cubic bezier sampled into points, start and end kept exact."""
+    points = [_pt(p0)]
+    for i in range(1, _BEZIER_STEPS):
+        t = i / _BEZIER_STEPS
+        u = 1 - t
+        points.append(
+            {
+                "x": round(u**3 * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t**3 * p3.x),
+                "y": round(u**3 * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t**3 * p3.y),
+            }
+        )
+    points.append(_pt(p3))
+    return points
+
+
+def _polyline_points(line: Any) -> list[dict[str, int]]:
+    """A kipy ``PolyLine``'s nodes as points; arc nodes are sampled."""
+    points: list[dict[str, int]] = []
+    for node in line:
+        if node.has_point:
+            piece = [_pt(node.point)]
+        elif node.has_arc:
+            a = node.arc
+            piece = _arc_points(a.start, a.mid, a.end)
+        else:  # pragma: no cover - kipy sets one of the two
+            continue
+        for p in piece:
+            if not points or not _near(points[-1], p, 0):
+                points.append(p)
+    while len(points) > 1 and _near(points[0], points[-1]):
+        points.pop()  # a polyline KiCad closed explicitly; rings do not repeat
+    return points
+
+
+def _rectangle_points(shape: Any) -> list[dict[str, int]]:
+    """A rectangle's four corners, clockwise from the top left (corners may be unordered)."""
+    xs = sorted((int(shape.top_left.x), int(shape.bottom_right.x)))
+    ys = sorted((int(shape.top_left.y), int(shape.bottom_right.y)))
+    return [
+        {"x": xs[0], "y": ys[0]},
+        {"x": xs[1], "y": ys[0]},
+        {"x": xs[1], "y": ys[1]},
+        {"x": xs[0], "y": ys[1]},
+    ]
+
+
+def _shape_id(shape: Any) -> str:
+    with contextlib.suppress(Exception):
+        return str(shape.id.value or "")
+    return ""  # pragma: no cover - kipy always has an id field
+
+
+def _loop(points: list[dict[str, int]], role: str, shapes: int) -> dict[str, Any]:
+    return {
+        "closed": True,
+        "role": role,
+        "points_nm": points,
+        "source_shapes": shapes,
+        "gap_nm": None,
+    }
+
+
+def _classify_shapes(edge: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split Edge.Cuts shapes into rings that close on their own and open pieces.
+
+    A rectangle, a circle and each ring of a polygon are already closed, so they
+    are loops in their own right; a polygon's holes stay separate loops rather
+    than being merged into its outline. A segment, arc or bezier is an open
+    piece for :func:`_chain_pieces`. An unclassifiable shape reaches
+    :func:`_shape_extent`, which raises ``internal_error`` (``_edge_outline``
+    has already done so; this keeps the two paths honest together).
+    """
+    from kipy.board_types import (
+        BoardArc,
+        BoardBezier,
+        BoardCircle,
+        BoardPolygon,
+        BoardRectangle,
+        BoardSegment,
+    )
+
+    rings: list[dict[str, Any]] = []
+    pieces: list[dict[str, Any]] = []
+    for shape in edge:
+        kind = type(shape)
+        if kind is BoardRectangle:
+            rings.append(_loop(_rectangle_points(shape), "outline", 1))
+        elif kind is BoardCircle:
+            rings.append(_loop(_circle_points(shape.center, float(shape.radius())), "outline", 1))
+        elif kind is BoardPolygon:
+            for poly in shape.polygons:
+                points = _polyline_points(poly.outline)
+                if len(points) >= 3:
+                    rings.append(_loop(points, "outline", 1))
+                for hole in poly.holes:
+                    hole_points = _polyline_points(hole)
+                    if len(hole_points) >= 3:
+                        rings.append(_loop(hole_points, "hole", 1))
+        elif kind is BoardSegment:
+            pieces.append({"points": [_pt(shape.start), _pt(shape.end)], "id": _shape_id(shape)})
+        elif kind is BoardArc:
+            pieces.append(
+                {"points": _arc_points(shape.start, shape.mid, shape.end), "id": _shape_id(shape)}
+            )
+        elif kind is BoardBezier:
+            pieces.append(
+                {
+                    "points": _bezier_points(
+                        shape.start, shape.control1, shape.control2, shape.end
+                    ),
+                    "id": _shape_id(shape),
+                }
+            )
+        else:
+            _shape_extent(shape)  # raises internal_error, naming the shape
+    return rings, pieces
+
+
+def _piece_key(piece: dict[str, Any]) -> tuple[Any, ...]:
+    """A deterministic order for chaining, from geometry then id.
+
+    Direction-independent, so the same board gives the same loops whatever
+    order KiCad lists the shapes in, and a junction where three or more
+    endpoints coincide is resolved the same way on every call.
+    """
+    a = (piece["points"][0]["x"], piece["points"][0]["y"])
+    b = (piece["points"][-1]["x"], piece["points"][-1]["y"])
+    lo, hi = sorted((a, b))
+    return (lo, hi, len(piece["points"]), piece["id"])
+
+
+def _prepare_pieces(pieces: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop zero-length pieces and exact duplicates, then order deterministically.
+
+    A zero-length segment would otherwise end a chain at a point it cannot
+    leave, and a shape drawn twice would double its loop.
+    """
+    kept: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for piece in sorted(pieces, key=_piece_key):
+        points = piece["points"]
+        if _near(points[0], points[-1]) and len(points) <= 2:
+            continue  # zero-length: nothing to chain through
+        fingerprint = tuple((p["x"], p["y"]) for p in points)
+        if fingerprint in seen or tuple(reversed(fingerprint)) in seen:
+            continue
+        seen.add(fingerprint)
+        kept.append(piece)
+    return kept
+
+
+def _chain_pieces(
+    pieces: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Greedy endpoint chaining into closed loops and leftover open chains.
+
+    Each chain grows from both ends so a piece in the middle of a run still
+    completes, and candidates are tried in :func:`_piece_key` order so the
+    result does not depend on the order KiCad listed the shapes. A chain whose
+    ends meet within :data:`_CHAIN_TOLERANCE_NM` is a closed loop; one that
+    does not is returned as it stands, with the gap that defeated it. Several
+    closed loops are normal: a board with a cutout has two.
+    """
+    remaining = _prepare_pieces(pieces)
+    loops: list[dict[str, Any]] = []
+    open_chains: list[dict[str, Any]] = []
+    while remaining:
+        head = remaining.pop(0)
+        points = list(head["points"])
+        used = 1
+        growing = True
+        while growing and not (len(points) >= 4 and _near(points[0], points[-1])):
+            growing = False
+            for i, piece in enumerate(remaining):
+                other = piece["points"]
+                if _near(points[-1], other[0]):
+                    points.extend(other[1:])
+                elif _near(points[-1], other[-1]):
+                    points.extend(reversed(other[:-1]))
+                elif _near(points[0], other[-1]):
+                    points[:0] = other[:-1]
+                elif _near(points[0], other[0]):
+                    points[:0] = list(reversed(other[1:]))
+                else:
+                    continue
+                remaining.pop(i)
+                used += 1
+                growing = True
+                break
+        if len(points) >= 4 and _near(points[0], points[-1]):
+            loops.append(_loop(points[:-1], "outline", used))
+        else:
+            open_chains.append(
+                {
+                    "closed": False,
+                    "role": "outline",
+                    "points_nm": points,
+                    "source_shapes": used,
+                    "gap_nm": _gap_nm(points[0], points[-1]),
+                }
+            )
+    return loops, open_chains
+
+
+def _origins(board: Any) -> tuple[dict[str, int] | None, dict[str, int] | None, str | None]:
+    """KiCad's grid and drill/place origins (file frame, nm), or why they are absent.
+
+    ``Board.get_origin`` is kipy 0.3.0+ and KiCad answers it on 10.0. Only an
+    "KiCad does not implement this" reply is turned into data; a busy or timed
+    out request is raised so ``session.py`` can retry and map it (C-3).
+    """
+    from kipy.errors import ApiError
+    from kipy.proto.board.board_commands_pb2 import BoardOriginType
+    from kipy.proto.common import ApiStatusCode
+
+    try:
+        grid = _pt(board.get_origin(BoardOriginType.BOT_GRID))
+        drill = _pt(board.get_origin(BoardOriginType.BOT_DRILL))
+    except ApiError as e:
+        if e.code in (ApiStatusCode.AS_UNIMPLEMENTED, ApiStatusCode.AS_UNHANDLED):
+            return (
+                None,
+                None,
+                "This KiCad does not answer GetBoardOrigin, so the grid and drill "
+                f"origins are unknown ({ApiStatusCode.Name(e.code)}).",
+            )
+        raise
+    return grid, drill, None
+
+
+def _outline(self: KipyBackend, ref: BoardRef) -> dict[str, Any]:
+    board = self._board(ref)
+    edge, extents = _edge_outline(board)
+    rings, pieces = _classify_shapes(edge)
+    chained, open_chains = _chain_pieces(pieces)
+    grid, drill, reason = _origins(board)
+    return {
+        "shape_count": len(edge),
+        "loops": rings + chained,
+        "open_chains": open_chains,
+        "outline_nm": extents,
+        "grid_origin_nm": grid,
+        "drill_origin_nm": drill,
+        "origins_reason": reason,
+        "chain_tolerance_nm": _CHAIN_TOLERANCE_NM,
+        "arc_step_deg": _ARC_STEP_DEG,
+    }
 
 
 # -- selection (#5) ----------------------------------------------------------
