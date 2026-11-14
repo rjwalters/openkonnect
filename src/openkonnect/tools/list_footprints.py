@@ -12,7 +12,7 @@ from typing import Any
 
 from .. import errors as E
 from ..session import Session
-from .common import frame_offset, mm, point_mm, require_board
+from .common import frame_offset, mm, parse_box, point_in_box, point_mm, require_board
 
 DESCRIPTION = (
     "List the footprints on the open board, live (unsaved changes included): refdes, "
@@ -27,7 +27,6 @@ DESCRIPTION = (
 )
 
 SIDES = ("front", "back")
-FRAMES = ("file", "board")
 
 
 def side_of(layer: str | None) -> str | None:
@@ -56,37 +55,6 @@ def parse_side(side: Any) -> str | None:
     return side
 
 
-def parse_box(box: Any) -> dict[str, Any] | None:
-    """Validate the ``box`` filter; returns mm corners, ordered, and the frame."""
-    if box is None:
-        return None
-    keys = ("x0_mm", "y0_mm", "x1_mm", "y1_mm")
-    if not isinstance(box, dict):
-        raise E.invalid_argument(
-            "box must be an object with x0_mm, y0_mm, x1_mm, y1_mm and frame.", keys=list(keys)
-        )
-    frame = box.get("frame")
-    if frame not in FRAMES:
-        raise E.invalid_argument(
-            "box.frame is required: 'file' or 'board' (spec C-1 has no default frame).",
-            allowed=list(FRAMES),
-        )
-    vals: list[float] = []
-    for k in keys:
-        v = box.get(k)
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
-            raise E.invalid_argument(f"box.{k} must be a number (mm).", keys=list(keys))
-        vals.append(float(v))
-    x0, y0, x1, y1 = vals
-    return {
-        "frame": frame,
-        "x0_mm": min(x0, x1),
-        "y0_mm": min(y0, y1),
-        "x1_mm": max(x0, x1),
-        "y1_mm": max(y0, y1),
-    }
-
-
 def describe_footprint(fp: dict[str, Any], offset_nm: dict[str, int] | None) -> dict[str, Any]:
     """One footprint of the board index as a LAY-02 entry (no IPC)."""
     pos = point_mm(fp.get("position_nm"))
@@ -113,14 +81,7 @@ def describe_footprint(fp: dict[str, Any], offset_nm: dict[str, int] | None) -> 
 
 
 def _inside(fp: dict[str, Any], box: dict[str, Any], offset_nm: dict[str, int] | None) -> bool:
-    p = fp.get("position_nm")
-    if p is None:
-        return False
-    x, y = mm(p["x"]), mm(p["y"])
-    if box["frame"] == "board":
-        x -= mm(offset_nm["x0_nm"]) if offset_nm else 0
-        y -= mm(offset_nm["y0_nm"]) if offset_nm else 0
-    return box["x0_mm"] <= x <= box["x1_mm"] and box["y0_mm"] <= y <= box["y1_mm"]
+    return point_in_box(fp.get("position_nm"), box, offset_nm)
 
 
 def list_footprints(

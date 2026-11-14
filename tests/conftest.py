@@ -212,6 +212,31 @@ def _pt(x: float, y: float) -> dict[str, int]:
     return {"x": round(x * MM), "y": round(y * MM)}
 
 
+def _track(
+    item_id: str,
+    net: str | None,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    *,
+    length_mm: float,
+    layer: str = "F.Cu",
+    width_mm: float = 0.125,
+    locked: bool = False,
+) -> dict[str, Any]:
+    """A straight track in the backend's ``copper`` form (LAY-05)."""
+    return {
+        "id": item_id,
+        "kind": "track",
+        "net": net,
+        "layer": layer,
+        "width_nm": round(width_mm * MM),
+        "start_nm": _pt(*start),
+        "end_nm": _pt(*end),
+        "length_nm": float(length_mm * MM),
+        "locked": locked,
+    }
+
+
 def selection_board_index() -> dict[str, Any]:
     """What KiCad reports for ``tests/fixtures/selection.kicad_pcb``, in board_index form.
 
@@ -351,6 +376,50 @@ class EditorFake(FakeBackend):
             },
         ]
 
+        #: tracks, arcs and vias in the backend's ``copper`` form (LAY-05).
+        #: The three VIN segments are the fixture's own route (3 + 10 + 3 = 16 mm);
+        #: the arc is a quarter circle of radius 2 mm around (120, 65), so its true
+        #: arc length is pi mm and its chord is 2 * sqrt(2) mm -- the two differ.
+        self.copper_list: list[dict[str, Any]] = [
+            _track("trk-1", "VIN", (109, 60), (109, 57), length_mm=3),
+            _track("trk-2", "VIN", (109, 57), (119, 57), length_mm=10),
+            _track("trk-3", "VIN", (119, 57), (119, 60), length_mm=3, locked=True),
+            {
+                "id": "arc-1",
+                "kind": "arc",
+                "net": "GND",
+                "layer": "B.Cu",
+                "width_nm": round(0.2 * MM),
+                "start_nm": _pt(122, 65),
+                "mid_nm": _pt(121.414214, 66.414214),
+                "end_nm": _pt(120, 67),
+                "length_nm": 3_141_592.653589793,
+                "locked": False,
+            },
+            {
+                "id": "via-1",
+                "kind": "via",
+                "net": "VIN",
+                "layers": ["F.Cu", "B.Cu"],
+                "position_nm": _pt(119, 57),
+                "diameter_nm": round(0.8 * MM),
+                "drill_nm": round(0.4 * MM),
+                "via_type": "through",
+                "locked": False,
+            },
+            {
+                "id": "via-2",
+                "kind": "via",
+                "net": None,  # edge: a via KiCad reports with no net
+                "layers": ["F.Cu", "In1.Cu"],
+                "position_nm": _pt(115, 62),
+                "diameter_nm": round(0.6 * MM),
+                "drill_nm": round(0.3 * MM),
+                "via_type": "blind_buried",
+                "locked": True,
+            },
+        ]
+
     def items_by_id(self) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
         for fp in self.index["footprints"]:
@@ -408,6 +477,13 @@ class EditorFake(FakeBackend):
     def zones(self, ref: BoardRef) -> dict[str, Any]:
         self.calls.append("zones")
         return {"zones": [dict(z) for z in self.zone_list]}
+
+    def copper(self, ref: BoardRef) -> dict[str, Any]:
+        self.calls.append("copper")
+        return {
+            "copper": [dict(c) for c in self.copper_list],
+            "outline_nm": self.index["outline_nm"],
+        }
 
     def pads(self, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
         self.calls.append("pads")

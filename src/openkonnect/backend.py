@@ -109,6 +109,21 @@ class IpcBackend(Protocol):
         """
         ...
 
+    def copper(self, ref: BoardRef) -> dict[str, Any]:
+        """Tracks, arcs and vias (LAY-05), as plain data.
+
+        Returns ``{"copper": [item, ...], "outline_nm": box | None}``. Every item has
+        ``id`` (session ID), ``kind`` (``"track"``, ``"arc"`` or ``"via"``), ``net``
+        (None when unconnected or unreadable) and ``locked``. A track or arc also has
+        ``layer`` (canonical name), ``width_nm``, ``start_nm``, ``end_nm`` and
+        ``length_nm`` (an arc's true arc length, not its chord), and an arc has
+        ``mid_nm``. A via instead has ``layers`` (the canonical names of its drill span),
+        ``position_nm``, ``diameter_nm`` (None if KiCad reports no copper layer),
+        ``drill_nm`` and ``via_type`` (``"through"``, ``"blind_buried"`` or ``"micro"``);
+        a via has no length. ``outline_nm`` is the C-1 board-frame origin box.
+        """
+        ...
+
     def pads(self, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
         """Pads with their geometry (LAY-03), as plain data.
 
@@ -310,6 +325,9 @@ class KipyBackend:
 
     def zones(self, ref: BoardRef) -> dict[str, Any]:
         return _zones(self, ref)
+
+    def copper(self, ref: BoardRef) -> dict[str, Any]:
+        return _copper(self, ref)
 
     def pads(self, ref: BoardRef, refs: list[str] | None = None) -> dict[str, Any]:
         return _pads(self, ref, refs)
@@ -830,6 +848,67 @@ def _zones(self: KipyBackend, ref: BoardRef) -> dict[str, Any]:
             }
         )
     return {"zones": out}
+
+
+def _via_layers(via: Any) -> list[str]:
+    """A via's layer span: the canonical names of its drill's start and end layers."""
+    drill = via.padstack.drill
+    names = [_layer_name(lyr) for lyr in (drill.start_layer, drill.end_layer)]
+    return [n for n in names if n]
+
+
+def _via_diameter(via: Any) -> int | None:
+    """The via's copper diameter, or None when KiCad reports no copper layer for it.
+
+    ``Via.diameter`` reads the first copper layer of the padstack and raises when
+    there is none; a diameter is never guessed (C-2), so that case is ``null``.
+    """
+    try:
+        return int(via.diameter)
+    except (ValueError, IndexError):
+        return None
+
+
+def _copper(self: KipyBackend, ref: BoardRef) -> dict[str, Any]:
+    from kipy.board_types import ArcTrack
+    from kipy.proto.board.board_types_pb2 import ViaType
+
+    board = self._board(ref)
+    out: list[dict[str, Any]] = []
+    for t in board.get_tracks():
+        is_arc = isinstance(t, ArcTrack)
+        entry: dict[str, Any] = {
+            "id": _item_id(t),
+            "kind": "arc" if is_arc else "track",
+            "net": _net_name(t.net),
+            "layer": _layer_name(t.layer),
+            "width_nm": int(t.width),
+            "start_nm": _vec(t.start),
+            "end_nm": _vec(t.end),
+            # kipy's ArcTrack.length() is the true arc length (angle * radius),
+            # falling back to the chord only for a degenerate arc.
+            "length_nm": float(t.length()),
+            "locked": bool(t.locked),
+        }
+        if is_arc:
+            entry["mid_nm"] = _vec(t.mid)
+        out.append(entry)
+    for v in board.get_vias():
+        out.append(
+            {
+                "id": _item_id(v),
+                "kind": "via",
+                "net": _net_name(v.net),
+                "layers": _via_layers(v),
+                "position_nm": _vec(v.position),
+                "diameter_nm": _via_diameter(v),
+                "drill_nm": int(v.drill_diameter),
+                "via_type": ViaType.Name(v.type).removeprefix("VT_").lower(),
+                "locked": bool(v.locked),
+            }
+        )
+    _, outline = _edge_outline(board)
+    return {"copper": out, "outline_nm": outline}
 
 
 def _pad_geometry(pad: Any) -> dict[str, Any]:
