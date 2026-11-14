@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import errors as E
 from ..backend import NM_PER_MM
 from ..session import Session
-from .common import DIRTY_UNKNOWN_NOTE, board_document
+from .common import DIRTY_UNKNOWN_NOTE, board_document, require_boards
 
 DESCRIPTION = (
     "Summarize the board open in KiCad's PCB editor, live (including unsaved changes): "
@@ -26,10 +25,9 @@ def _mm(nm: int) -> float:
 
 
 def board_summary(session: Session) -> dict[str, Any]:
-    session.require_reachable()
-    boards = session.call(lambda b: b.open_boards())
-    if not boards:
-        raise E.no_document("board")
+    # The whole list, not require_board's first board: boards_open reports its
+    # length. An unsaved board is summarized, so require_saved must not run.
+    boards = require_boards(session)
     ref = boards[0]
     data = session.call(lambda b: b.board_data(ref))
 

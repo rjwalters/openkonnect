@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from ..backend import NM_PER_MM, BoardRef
+from ..session import Session
 
 #: KiCad 10 has no documented "modified since last save" query (spec, "What
 #: KiCad 10's IPC API allows", item 4), so dirty state is never guessed.
@@ -71,6 +72,24 @@ def inferred_schematic(ref: BoardRef) -> dict[str, Any] | None:
         "dirty": "unknown",
         "dirty_basis": "none",
     }
+
+
+# -- argument validation -------------------------------------------------------
+
+
+def check_str(name: str, value: Any) -> str | None:
+    """A string filter argument, or None when it is absent or empty.
+
+    An empty string means "no filter", the same as ``None``; any non-string is
+    ``invalid_argument``, reported under the argument's own name.
+    """
+    from .. import errors as E
+
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise E.invalid_argument(f"{name} must be a string.", **{name: value})
+    return value
 
 
 # -- coordinates (spec C-1) ----------------------------------------------------
@@ -146,12 +165,46 @@ def pad_name(item: dict[str, Any]) -> str | None:
     return None
 
 
-def require_board(session: Any) -> BoardRef:
-    """SES-07 fail-fast, then the first open board, or ``no_document``."""
+# -- board acquisition (SES-07) ------------------------------------------------
+#
+# The SES-07 fail-fast sequence (require_reachable -> open_boards ->
+# no_document) is written once, in require_boards; the two helpers below are
+# the only variations on it. A tool that needs an open board calls one of the
+# three rather than repeating the sequence (issue #90).
+
+
+def require_boards(session: Any, kind: str = "board") -> list[BoardRef]:
+    """SES-07 fail-fast, then every open board, or ``no_document``.
+
+    ``kind`` names the missing document in the error, for a caller that asked
+    for something other than the board.
+    """
     from .. import errors as E
 
     session.require_reachable()
     boards = session.call(lambda b: b.open_boards())
     if not boards:
-        raise E.no_document("board")
-    return boards[0]
+        raise E.no_document(kind)
+    return boards
+
+
+def require_board(session: Any) -> BoardRef:
+    """SES-07 fail-fast, then the first open board, or ``no_document``.
+
+    The board's file is not required: an unsaved board is returned as-is. Use
+    :func:`open_boards_or_fail` when the file itself is needed.
+    """
+    return require_boards(session)[0]
+
+
+def open_boards_or_fail(session: Session, kind: str = "board") -> list[BoardRef]:
+    """SES-07: fail fast on connection codes, then ``no_document``.
+
+    A board request also needs the board's file, so a board that has never
+    been saved (no path) is ``no_document`` too, with its own message.
+    """
+    boards = require_boards(session, kind)
+    if kind == "board":
+        for ref in boards:
+            require_saved(ref)
+    return boards
