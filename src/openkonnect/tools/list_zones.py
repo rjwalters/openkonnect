@@ -7,12 +7,11 @@ file reference.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from .. import errors as E
 from ..session import Session
-from .common import require_board
+from .common import is_layer, require_board
 
 DESCRIPTION = (
     "List the copper zones and rule areas (keepouts) on the open board, live, unsaved "
@@ -24,37 +23,6 @@ DESCRIPTION = (
     "name (e.g. 'F.Cu'), keeps zones on that layer. A filter that matches nothing is an "
     "empty list; an unknown layer is invalid_argument."
 )
-
-_FIXED_LAYERS = frozenset(
-    {
-        "F.Cu",
-        "B.Cu",
-        "F.Adhes",
-        "B.Adhes",
-        "F.Paste",
-        "B.Paste",
-        "F.SilkS",
-        "B.SilkS",
-        "F.Mask",
-        "B.Mask",
-        "Dwgs.User",
-        "Cmts.User",
-        "Eco1.User",
-        "Eco2.User",
-        "Edge.Cuts",
-        "Margin",
-        "F.CrtYd",
-        "B.CrtYd",
-        "F.Fab",
-        "B.Fab",
-    }
-)
-_INNER = re.compile(r"In([1-9]|[12]\d|30)\.Cu")
-_USER = re.compile(r"User\.([1-9]|[1-9]\d|1\d\d)")
-
-
-def _is_layer(name: str) -> bool:
-    return name in _FIXED_LAYERS or bool(_INNER.fullmatch(name) or _USER.fullmatch(name))
 
 
 def _check_str(name: str, value: Any) -> str | None:
@@ -102,7 +70,7 @@ def describe_zones(
 def list_zones(session: Session, net: Any = None, layer: Any = None) -> dict[str, Any]:
     net = _check_str("net", net)
     layer = _check_str("layer", layer)
-    if layer is not None and not _is_layer(layer):
+    if layer is not None and not is_layer(layer):
         raise E.invalid_argument(
             f"Unknown layer {layer!r}. Use a canonical name such as 'F.Cu', 'In1.Cu' or 'B.Cu'.",
             layer=layer,

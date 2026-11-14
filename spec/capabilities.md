@@ -894,7 +894,27 @@ state, including unsaved changes. Every edit follows C-6.
   endpoints or centre, the via's size and drill, and locked state. Plus a total
   length per net.
 - **Failure modes:** `no_document`; `invalid_argument` for an unknown layer.
+- **Status:** built. Lengths come from kicad-python's `Track.length()` /
+  `ArcTrack.length()`.
 - **Sources:** P-D3, P-T7.
+- **As built:** tracks, arcs and vias only; zones are
+  [LAY-06](#lay-06-list_zones). `net` is an exact net name, `layer` a canonical
+  layer name: a track or arc matches its own layer, a via matches either end of
+  its drill span. `box` keeps an item when **any** point it reports is inside
+  (a track's two endpoints, an arc's start, mid and end, a via's centre), so a
+  track with one end in the area is never silently dropped; `box.frame` is
+  required and `board` on a board with no Edge.Cuts outline is
+  `invalid_argument`. Each item has `kind`, `id` (session-scoped,
+  `no_file_reference: true`), `net` (`null` when unconnected), the points in
+  both C-1 frames (the `_board_mm` points are `null` without an outline) and
+  `locked`. A track or arc has `layer`, `width_mm` and `length_mm` — an arc's
+  **true arc length**, not its chord; a via instead has `layers` (its drill
+  span), `diameter_mm` (`null` if KiCad reports no copper layer for it),
+  `drill_mm`, `via_type` (`through`, `blind_buried` or `micro`) and
+  `length_mm: null`, since a via spans layers rather than running along one.
+  `total_length_mm_by_net` totals the **filtered** items, not the whole board,
+  and `filters` is echoed beside it; a named net that kept only vias totals
+  `0.0`. A filter that matches nothing is an empty list.
 
 ### LAY-06 `list_zones`
 - **Class:** live-editor · **kicad-tools:** file-level equivalent already in

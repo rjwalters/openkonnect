@@ -5,7 +5,7 @@ File sync (#4): ``save_before_external_write`` (SES-04), ``sync_from_disk``
 (SES-05) and ``run_kct_handoff`` (SES-06).
 Selection and findings (#5): ``get_selection`` (SES-08, read-only) and
 ``show_findings`` (SES-09, changes only the editor selection).
-``list_nets`` (LAY-04) and ``footprint_pads`` (LAY-03), read-only.
+``list_nets`` (LAY-04), ``list_copper`` (LAY-05) and ``footprint_pads`` (LAY-03), read-only.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from .session import Session
 from .tools import board_summary as board_summary_mod
 from .tools import footprint_pads as footprint_pads_mod
 from .tools import get_selection as get_selection_mod
+from .tools import list_copper as list_copper_mod
 from .tools import list_footprints as list_footprints_mod
 from .tools import list_instances as list_instances_mod
 from .tools import list_nets as list_nets_mod
@@ -149,6 +150,20 @@ def build_server(session: Session | None = None) -> FastMCP:
         include_items: bool = False,
     ) -> CallToolResult:
         return await run(lambda s: list_nets_mod.list_nets(s, pattern, net_class, include_items))
+
+    @mcp.tool(
+        name="list_copper",
+        description=list_copper_mod.DESCRIPTION,
+        annotations=_READ_ONLY,
+        structured_output=False,
+    )
+    async def list_copper(
+        net: str | None = None,
+        layer: str | None = None,
+        box: dict[str, Any] | None = None,
+        locked_only: bool = False,
+    ) -> CallToolResult:
+        return await run(lambda s: list_copper_mod.list_copper(s, net, layer, box, locked_only))
 
     @mcp.tool(
         name="list_zones",
