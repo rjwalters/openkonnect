@@ -1,14 +1,12 @@
 # openkonnect Roadmap
 
 **Mission**: give any MCP-capable LLM agent a free, permissively licensed way to
-drive a **running KiCad 10** editor.
+drive a **running KiCad 10** editor. openkonnect is the live-editor layer;
+anything that works offline on `.kicad_*` files belongs in
+[kicad-tools](https://github.com/rjwalters/kicad-tools).
 
-openkonnect is the live-editor layer. Anything that works offline on
-`.kicad_*` files belongs in [kicad-tools](https://github.com/rjwalters/kicad-tools);
-openkonnect adds what only an open editor can offer: the IPC session, file
-sync so kicad-tools' file-based writes are safe next to an open editor (#4),
-what the user is looking at and has selected, and edits that land in the open
-document with undo.
+**Status as of 2026-11-13, `main` @ `eb3173a`.** Phase and principle numbers
+are stable: [spec/capabilities.md](spec/capabilities.md) cites them.
 
 ## Principles
 
@@ -39,169 +37,120 @@ document with undo.
    runs of KiCad and `kicad-cli`. No `pcbnew` SWIG bindings, and no reading
    KiCad's GPL source to copy behaviour.
 
-## Non-goals
+## Where it stands
+
+Twelve MCP tools are registered and unit-tested on a fake IPC backend (README
+tool table; `src/openkonnect/tools/`). CI runs lint, tests on Python 3.10 and
+3.12, and a non-blocking `kicad-tools-main` job.
+
+- **Phase 0, Foundations: done.** Spec v0 (#1), bootstrap with `session_status`
+  and `board_summary` (#2), file sync and the handoff protocol with
+  `save_before_external_write`, `sync_from_disk`, `run_kct_handoff` (#4, PR #13;
+  hardened in #59, #63, #65), IPC client decision `kipy` (#2,
+  `docs/ipc-client.md`), permissive-reuse rules (#7), kicad-tools boundary
+  (#6, `docs/architecture.md`). The live harness exists: `tests/live/`, the
+  `live_kicad` marker, the `--live` opt-in (#40) and fixture boards in
+  `tests/fixtures/`. It runs only by hand; see Blocked and waiting.
+- **Phase 1, Live session and read-only inspection: partly built.** Done:
+  `list_instances` SES-02 (#70), `get_selection` SES-08 (#5, PR #16),
+  `list_footprints` LAY-02 (#68), `footprint_pads` LAY-03 (#75), `list_nets`
+  LAY-04 (#69), `list_zones` LAY-06 (#78). Not built: SES-03, SES-11, SES-12,
+  SES-16, LAY-05, LAY-07, LAY-08, LAY-09.
+- **Phase 4, Design review: two items built early.** `show_findings` SES-09
+  (PR #16) and the selection round-trip tests SES-10
+  (`tests/test_show_findings.py`, `test_round_trip_*`; kept green against
+  kicad-tools `main` by #81).
+- **Phases 2, 3, 5, 6: not started.** No tool edits the open board over IPC
+  yet; the only writes are save, reload and the `kct` handoff.
+- **Live verification is behind the code.** The PRs for `list_instances` (#71),
+  `list_footprints` (#72), `list_nets` (#73), `footprint_pads` (#76) and
+  `list_zones` (#79) each record that no run against a real KiCad was made.
+  `list_zones` has no test under `tests/live/` at all.
+
+## Now
+
+Can start today; each is one PR built from an existing spec entry. Per
+[spec/README.md](spec/README.md), the implementer must not be that entry's
+spec author. None has an issue yet.
+
+| What | Done when | Blocked by |
+|------|-----------|------------|
+| `list_copper` (LAY-05): tracks, arcs and vias by net, layer or box | Tool registered; fake-backend unit tests; a `tests/live/` test; README row; spec entry marked built; `tests/test_doc_drift.py` passes | nothing |
+| `layers_and_stackup` (LAY-07) | Same checklist as above | nothing |
+| `board_outline` (LAY-08): closed polygons, extents, frame offset, grid and drill origins | Same checklist; an open or missing outline is reported, never a rectangle | nothing |
+| Catch up with kicad-tools: `pyproject.toml` pins `>=0.24,<0.25` and `uv.lock` resolves 0.24.0, while upstream is at v0.29.0 and has closed G1, G2 and G4 (kicad-tools #8015, #8016, #8017) | Pin and `uv.lock` raised to the current release, `uv run pytest -rs` green; the gap tables in `docs/architecture.md` and the spec say which release closed each gap | nothing |
+| `snapshot_board` (SES-11): the open board, unsaved changes included, as a temporary `.kicad_pcb` with project files beside it | Same checklist as LAY-05; the saved file's hash is unchanged after the call | nothing |
+| `select_instance` (SES-03) | Same checklist; a different instance answering later fails with `instance_changed` | nothing |
+| Live test for `list_zones` | `tests/live/test_live_list_zones.py` exists, is skipped without `--live`, and names the fixture board it needs | nothing |
+
+## Next
+
+| What | Done when | Unblocked by |
+|------|-----------|--------------|
+| `compare_with_disk` (SES-12), built on `kct pcb diff` | Tool registered with tests; its temporary directory is gone after every call | `snapshot_board` |
+| `view_state` (SES-16, read half: active and visible layers) | Tool registered with tests; the viewport is not reported | `layers_and_stackup`, so both tools name layers the same way |
+| `design_rules` (LAY-09), file-level on KiCad 10 through kicad-tools | Tool registered; the result carries the C-8 note that unsaved rule edits are not visible | the kicad-tools pin raise, so it is written against current `kct` output |
+| Adopt the versioned finding format in `show_findings` (G1) | `show_findings` reads the versioned format and refuses an unknown version, with a test | the kicad-tools pin raise |
+| Tick the Phase 1 exit criteria | Every Phase 1 spec entry is marked built or deferred with a reason, and each has a recorded live run | the Now items, and #74 |
+
+## Later
+
+Direction only. Each phase keeps its original exit criterion.
+
+- **Phase 2, Interactive layout edits** (SES-13, SES-17, LAY-10 to LAY-17,
+  dry-run for every mutating tool). Exit: a multi-step change the user can
+  undo with one Ctrl+Z per action. First answer: how do IPC edits avoid
+  colliding with the user editing at the same time (the open question in
+  SES-17)? `focus_view` (SES-14) and `highlight_net` (SES-15) stay deferred
+  until KiCad documents an API for them.
+- **Phase 3, Placement and routing in the editor** (PLC-01 to PLC-04, RTE-01
+  to RTE-08). Exit: "place and route the selected block" works on a fixture
+  board and one undo reverts it. First answer: does a push of kicad-tools
+  results land as one transaction on a real KiCad 10?
+- **Phase 4, Design review, remainder** (REV-01 to REV-08). Exit: find a
+  violation, show it, fix it, confirm the fix. `recheck_touched` (REV-07)
+  needs the region-limited check (G2) from the pinned kicad-tools. Sign-off
+  stays two-engine on the saved file (#6).
+- **Phase 5, Schematic** (SCH-01 to SCH-07). The spec settled the scoping
+  question: KiCad 10's API serves the PCB editor only, so live schematic
+  reading and editing wait for KiCad 11. First answer: is the file-level
+  fallback through the #4 handoff worth shipping before then?
+- **Phase 6, Manufacturing** (MFG-01 to MFG-05). Mostly delegation to
+  kicad-tools and `kicad-cli` on the saved file. First answer: which of the
+  G4 exports does the pinned kicad-tools release provide?
+- **v1.0.** Every spec capability implemented or deferred with a reason;
+  stable tool names and schemas with a deprecation policy; tested against a
+  released KiCad 10.x on macOS, Linux and Windows; install docs for the
+  common MCP clients; every implementation PR records its spec and a
+  clean-room attestation; no board reported done without two-engine sign-off.
+
+## Blocked and waiting
+
+- **Nothing is dispatchable today.** [WORK_PLAN.md](WORK_PLAN.md) shows every
+  bucket empty, and the Now items above have no issues yet.
+- **#74, live run of `list_nets` against KiCad 10**, is held for a person at a
+  machine with KiCad 10 and the API on. The same kind of run is owed for
+  `list_instances`, `list_footprints`, `footprint_pads` and `list_zones`.
+- **Live tests cannot run in CI.** KiCad 10's API talks only to a running GUI;
+  headless use arrives in KiCad 11 (spec, "What KiCad 10's IPC API allows").
+  Until then live evidence comes from hand runs with `--live`.
+- **On KiCad 10 `dirty` is always `unknown`**, because the API has no
+  modified-since-save query. The handoff treats unknown as dirty.
+
+## Not planned
 
 - Replacing KiCad, or reimplementing work KiCad or `kicad-cli` already does well.
 - A second copy of file-level features that kicad-tools already ships.
-- Support for KiCad 9 or earlier (contributions welcome later, but it is not planned).
+- Support for KiCad 9 or earlier (contributions welcome later).
 - Feature parity with any closed-source product. The target is a useful agent
   interface, not a clone.
+- An external autorouter round trip (RTE-09) and GUI automation: both are out
+  of scope in the spec's "Considered and not specified".
 
----
+## What changed in this revision (2026-11-13)
 
-## Phase 0: Foundations
-
-**Goal**: a spec to build from and a server that connects.
-
-- [x] Project charter, clean-room rules, MIT license
-- [x] Agent tooling (Loom, Repo Skills, Squad)
-- [x] **Capability spec v0** (#1): `spec/capabilities.md`, grouped by area. Each
-      capability is marked file-level or live-editor, and as already in
-      kicad-tools where it is. Includes a provenance section.
-- [x] **Bootstrap** (#2): `pyproject.toml` (uv, Python >= 3.10), the
-      `openkonnect serve` MCP entry point, `session_status` and `board_summary`,
-      clean errors when KiCad isn't running, CI on mocked IPC.
-- [x] **Live-editor file sync** (#4): dirty state per open document in
-      `session_status`, `save_before_external_write`, `sync_from_disk`, and the
-      documented handoff protocol (save, `kct` writes, reload), with an
-      end-to-end test that wraps one `kct` command such as `kct route`.
-- [x] **IPC client decision** (#2): build on kicad-tools' `kicad_tools.ipc`,
-      KiCad's official Python IPC bindings, or permissively licensed IPC code
-      reusable under [CLEANROOM.md](CLEANROOM.md), such as KiCAD-MCP-Server's
-      MIT IPC backend (IPC parts only: no `pcbnew` SWIG, no AT-SPI). Record
-      the license and the reason in the repo. Decided: `kipy` (kicad-python,
-      MIT), recorded in [docs/ipc-client.md](docs/ipc-client.md).
-- [x] **CLEANROOM.md amendment** (#7): code under MIT, BSD, ISC or
-      Apache-2.0 may be reused with attribution; GPL code, including KiCad's
-      source, stays black-box only. No file mixes reused code with anything
-      recalled from Konnect, and a `NOTICE` file lists what was taken. The
-      rules are in [CLEANROOM.md](CLEANROOM.md).
-- [x] **kicad-tools boundary** (#6): `docs/architecture.md` with the
-      file-level vs live-editor rule and the list of gaps filed upstream, a
-      pinned kicad-tools version range in `pyproject.toml`, and a CI job that
-      runs against kicad-tools `main`.
-- [ ] A live-KiCad test harness: a marked test suite that runs against a real
-      KiCad 10 locally, and fixture projects written for this repo.
-
-**Exit criteria**: an MCP client can connect, see which board and schematic are
-open and whether they are dirty, get a summary of the board, and run a `kct`
-write next to the open editor without losing either side's changes.
-
-## Phase 1: Live session and read-only inspection
-
-**Goal**: the agent can see what the user sees.
-
-- [ ] Session: discover running instances, choose one, report KiCad version and
-      which IPC API features it supports
-- [ ] Open documents, project paths, and whether the board in the editor
-      differs from the file on disk (#4)
-- [ ] Current selection (#5): `get_selection` returns stable file-level
-      references (refdes, net names, `REF.PAD`, a bbox in mm board
-      coordinates) that can be passed straight to `kct`
-- [ ] Board queries: footprints, nets, tracks, vias, zones, layers, stackup,
-      design rules, board outline
-- [ ] View state: active layer, visible layers, viewport
-- [ ] Hand-off to kicad-tools: snapshot the live board and run file-level
-      analysis on that snapshot
-
-**Exit criteria**: an agent can answer "what's on this board and what have I
-selected?" without the user saving first.
-
-## Phase 2: Interactive layout edits
-
-**Goal**: safe, undoable edits in the open board.
-
-- [ ] Transaction model: begin, commit and rollback, with one undo step per tool call
-- [ ] Footprints: move, rotate, flip, lock, change fields
-- [ ] Tracks and vias: create, delete, change width and net
-- [ ] Zones: create, edit, refill
-- [ ] Selection and view control: select items, zoom to items, highlight a net,
-      clear highlighting
-- [ ] Dry-run mode for every mutating tool: report what would change, change nothing
-
-**Exit criteria**: an agent can make a multi-step layout change that the user
-can review in the editor and undo with one Ctrl+Z per action.
-
-## Phase 3: Placement and routing in the editor
-
-**Goal**: offline compute in kicad-tools, pushed live into the editor.
-
-- [ ] Placement: run kicad-tools placement on a snapshot and apply the result
-      as one transaction, either for the whole board or only the selection
-- [ ] Routing: route selected nets or the whole board with kicad-tools' router,
-      then push the copper
-- [ ] Respect locked items, existing copper and keepouts the user drew
-- [ ] Before/after summary for every placement or routing push (moved parts,
-      added copper, unrouted nets)
-
-**Exit criteria**: "place and route the selected block" works end to end on a
-fixture board, and one undo reverts it.
-
-## Phase 4: Design review in the editor
-
-**Goal**: violations the agent can point the user at.
-
-- [ ] Run DRC and return structured results. In-editor DRC is a quick
-      check only; sign-off is two-engine (#6): `kct check --mfr` and
-      `kicad-cli pcb drc --refill-zones`, both at 0 errors on the saved file.
-      openkonnect never reports a board as done from in-editor DRC alone.
-- [ ] Show findings (#5): `show_findings` reads kicad-tools' JSON findings
-      (no copied schema), then selects, highlights and zooms to them
-- [ ] Round-trip test (#5): selection → `kct` references → findings →
-      highlight lands on the same items
-- [ ] Explain violations in context, using kicad-tools' explanation and intent data
-- [ ] Re-check only what an edit touched, after each agent edit
-
-**Exit criteria**: an agent can find a violation, show it to the user in the
-editor, fix it, and confirm the fix.
-
-## Phase 5: Schematic
-
-**Goal**: the same live-editor loop for the schematic editor.
-
-This phase depends on what KiCad 10's IPC API exposes for the schematic editor.
-Check the KiCad 10 API docs before scoping it.
-
-- [ ] Read the open schematic: sheets, symbols, nets, selection
-- [ ] Edit symbols, fields, wires and labels through transactions, if the API allows it
-- [ ] Cross-probe between schematic and board
-- [ ] Fallback when the API lacks schematic edits: kicad-tools edits the file
-      through the #4 handoff protocol (save, write, reload). The reload is not
-      an undo step, and that limitation is stated clearly
-
-**Exit criteria**: schematic capabilities match what the IPC API allows, and
-the gaps are documented.
-
-## Phase 6: Manufacturing
-
-**Goal**: production outputs from the board that is open.
-
-Mostly delegation. Exports already exist in kicad-tools and `kicad-cli`.
-
-- [ ] Export gerbers, drill files, BOM, CPL and an assembly package from the
-      current board state, saving first or snapshotting as needed
-- [ ] A pre-fab check that runs before export on the saved file: `kct check
-      --mfr` and `kicad-cli pcb drc --refill-zones`, both at 0 errors (#6),
-      plus unrouted nets and missing fields
-
-## v1.0
-
-- Every capability in the spec is either implemented or explicitly deferred
-  with a reason.
-- Stable tool names and schemas, with a deprecation policy for changing them.
-- Tested against a released KiCad 10.x on macOS, Linux and Windows.
-- Install docs for the common MCP clients.
-- Every implementation PR records its spec and a clean-room attestation.
-- No board is reported done without two-engine sign-off on the saved file (#6).
-
----
-
-## Open questions and risks
-
-| Question | Why it matters | Resolve by |
-|----------|----------------|------------|
-| Which IPC client library? | License and maintenance. Candidates: `kicad_tools.ipc`, KiCad's official bindings, permissively licensed IPC code reusable under `CLEANROOM.md` such as KiCAD-MCP-Server's MIT IPC backend (#7) | Decided (#2): `kipy` (kicad-python, MIT), recorded in `docs/ipc-client.md` |
-| What does KiCad 10's IPC API cover for the schematic editor? | Decides the scope of Phase 5 | Phase 0 spec |
-| How do we keep IPC edits from colliding with the user editing at the same time? | Data loss and surprising undo history. External file writes are covered by the #4 handoff protocol | Phase 2 |
-| How should live tests run in CI? | KiCad needs a display; headless support varies by platform | Phase 0 harness |
-| Where does file-level logic go when it's needed here? | Keeps the two repos from drifting apart | Decided (#6): it lives in kicad-tools; gaps are filed on rjwalters/kicad-tools and listed in `docs/architecture.md` |
+The per-phase checklists became the status and Now / Next / Later sections
+above. Corrected: Phase 0's live harness and six Phase 1 tools were still
+unticked though merged; the IPC-client, schematic-scope and live-CI questions
+are answered and moved out of the open-questions table; upstream gaps G1, G2
+and G4, listed as open in `docs/architecture.md`, are closed upstream.
