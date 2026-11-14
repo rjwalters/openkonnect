@@ -14,7 +14,7 @@ from typing import Any
 
 from .. import errors as E
 from ..session import Session
-from .common import pad_name, require_board
+from .common import check_str, pad_name, require_board
 
 MIN_KICAD_ITEMS = "10.0.1"
 
@@ -36,14 +36,6 @@ def version_tuple(version: str | None) -> tuple[int, ...] | None:
     if not m:
         return None
     return tuple(int(p) if p else 0 for p in m.groups())
-
-
-def _check_str(name: str, value: Any) -> str | None:
-    if value is None or value == "":
-        return None
-    if not isinstance(value, str):
-        raise E.invalid_argument(f"{name} must be a string.", **{name: value})
-    return value
 
 
 def describe_nets(
@@ -106,8 +98,8 @@ def list_nets(
     net_class: Any = None,
     include_items: bool = False,
 ) -> dict[str, Any]:
-    pattern = _check_str("pattern", pattern)
-    net_class = _check_str("net_class", net_class)
+    pattern = check_str("pattern", pattern)
+    net_class = check_str("net_class", net_class)
     items = bool(include_items)
     ref = require_board(session)
     if items:

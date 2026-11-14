@@ -28,7 +28,7 @@ from ..session import (
     sha256_bytes,
     text_sha256,
 )
-from .common import inferred_schematic, require_saved
+from .common import inferred_schematic, open_boards_or_fail
 
 DESCRIPTION = (
     "Before a file-based tool (kct) touches a board open in KiCad, make the file on disk "
@@ -73,22 +73,6 @@ def parse_documents(documents: Any) -> tuple[bool, bool]:
         want_board |= item in ("board", "all")
         want_sch |= item in ("schematic", "all")
     return want_board, want_sch
-
-
-def open_boards_or_fail(session: Session, kind: str = "board") -> list[BoardRef]:
-    """SES-07: fail fast on connection codes, then ``no_document``.
-
-    A board request also needs the board's file, so a board that has never
-    been saved (no path) is ``no_document`` too, with its own message.
-    """
-    session.require_reachable()
-    boards = session.call(lambda b: b.open_boards())
-    if not boards:
-        raise E.no_document(kind)
-    if kind == "board":
-        for ref in boards:
-            require_saved(ref)
-    return boards
 
 
 def schematic_unsupported(path: str | None) -> OpenKonnectError:

@@ -40,11 +40,8 @@ from typing import Any
 from .. import errors as E
 from ..errors import ErrorCode, OpenKonnectError
 from ..session import Session, file_state
-from .save_before_external_write import (
-    open_boards_or_fail,
-    parse_documents,
-    save_before_external_write,
-)
+from .common import open_boards_or_fail
+from .save_before_external_write import parse_documents, save_before_external_write
 from .sync_from_disk import UNDO_NOTE, sync_from_disk
 
 DESCRIPTION = (
