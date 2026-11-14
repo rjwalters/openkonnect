@@ -945,7 +945,35 @@ state, including unsaved changes. Every edit follows C-6.
   - KiCad's grid and drill origins.
 - **Failure modes:** `no_document`. A missing or open outline is reported as
   such, and is never treated as a rectangle.
+- **Status:** built.
 - **Sources:** P-D3.
+- **As built:** `outline.loops` are the closed rings, each with `points_mm` in
+  the `file` frame (the first point is not repeated), `point_count`,
+  `source_shapes` and `role`. `role` is `hole` only for a ring KiCad itself
+  declares a hole of a polygon; a cutout drawn as its own Edge.Cuts shapes is
+  another `outline` ring. Either way rings stay separate -- nothing is merged
+  or subtracted, and no containment analysis is done. A rectangle, a circle and each
+  ring of a polygon close on their own; segments, arcs and beziers are chained
+  by endpoint, joining ends within 0.01 mm (the tolerance `kct` uses), in an
+  order derived from geometry so the loops do not depend on the order KiCad
+  lists the shapes. Arcs and circles are sampled every 5 degrees and beziers
+  into 24 segments, so a loop containing a curve is an approximation; the step
+  is stated in `outline.basis`. Zero-length shapes and a shape drawn twice are
+  dropped rather than breaking or doubling a loop. No board-level Edge.Cuts
+  shape is `outline.present: false` with the same wording `board_summary` uses;
+  shapes that do not close are `present: true`, `closed: false`, with the
+  partial chains in `open_chains` (each carrying the `gap_mm` between its ends)
+  and a `reason` naming the smallest gap. `extents` and `frame_offset` are
+  reported whenever there is any board-level Edge.Cuts geometry, on
+  `board_summary`'s basis (geometry, not stroke width; footprint-owned
+  graphics excluded), because they are honest even when nothing closed. The
+  grid and drill origins come from KiCad's `GetBoardOrigin` and are given in
+  both frames, with `board` null (never zero) when there is no frame offset;
+  `origins.note` records that KiCad reports an origin the user never moved as
+  (0, 0) and cannot distinguish that from one deliberately placed there. A
+  KiCad without the origin query gives `present: false` and a reason rather
+  than failing the call. The implementer did not write or edit this entry's
+  purpose, inputs, outputs or failure modes (`spec/README.md`).
 
 ### LAY-09 `design_rules`
 - **Class:** file-level on KiCad 10 · **kicad-tools:** already in kicad-tools
