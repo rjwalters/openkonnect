@@ -15,19 +15,21 @@ _None._
 
 `loom:very-important` (one counts per workspace); every stage takes these first.
 
-_None._
+- **#91**: list_footprints(refs=[]) silently returns zero footprints: five string-list validators, three empty-value rules
 
 ## Important
 
 `loom:important`; taken before unlabelled work.
 
-_None._
+- **#86**: Implement LAY-05 list_copper (tracks, arcs and vias by net, layer or box)
+- **#87**: Implement LAY-07 layers_and_stackup (enabled layers, names and physical stackup)
+- **#88**: Implement LAY-08 board_outline (closed polygons, extents, frame offset, origins)
 
 ## Ready
 
 Human-approved issues ready for implementation (`loom:issue`).
 
-_None._
+- **#90**: Consolidate three duplicated board-acquisition and validation helpers into tools/common.py
 
 ## In Progress
 
@@ -39,7 +41,7 @@ _None._
 
 PRs waiting on Judge (`loom:review-requested`).
 
-_None._
+- **#85**: docs: roadmap as of 2026-11-13
 
 ## Approved (Awaiting Merge)
 
@@ -51,11 +53,13 @@ _None._
 
 Issues carrying `loom:curated`.
 
-_None._
+- **#86**: Implement LAY-05 list_copper (tracks, arcs and vias by net, layer or box) *(curated)*
+- **#87**: Implement LAY-07 layers_and_stackup (enabled layers, names and physical stackup) *(curated)*
+- **#88**: Implement LAY-08 board_outline (closed polygons, extents, frame offset, origins) *(curated)*
 
 ## Proposed (Architect / Hermit)
 
-_None._
+- **#91**: list_footprints(refs=[]) silently returns zero footprints: five string-list validators, three empty-value rules *(hermit)*
 
 ## Epics
 
@@ -66,13 +70,13 @@ _None._
 | Bucket | Count |
 |------|-------|
 | Operator merge-risk holds | 0 |
-| Very important | 0 |
-| Important | 0 |
-| Ready (`loom:issue`) | 0 |
+| Very important | 1 |
+| Important | 3 |
+| Ready (`loom:issue`) | 1 |
 | In Progress (`loom:building`) | 0 |
-| PRs awaiting review | 0 |
+| PRs awaiting review | 1 |
 | Approved PRs awaiting merge | 0 |
-| Curated | 0 |
-| Architect / Hermit proposals | 0 |
+| Curated | 3 |
+| Architect / Hermit proposals | 1 |
 | Active epics | 0 |
 <!-- guide:plan-body:end -->
